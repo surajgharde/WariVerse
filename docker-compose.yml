@@ -1,0 +1,70 @@
+# WariVerse — development stack.
+#   docker compose up -d db redis      # infra only
+#   docker compose up                  # everything
+#
+# Phase 1 ships db, redis and core-api.  Later phases add ai-engine, notifier
+# and the three frontends; their service blocks are added as they are built.
+
+services:
+  db:
+    # timescaledb-ha bundles TimescaleDB *and* PostGIS on PG16 — we need both
+    # (density hypertable + zone polygons).
+    image: timescale/timescaledb-ha:pg16
+    container_name: wariverse-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wariverse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-in-prod}
+      POSTGRES_DB: ${POSTGRES_DB:-wariverse}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - db_data:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wariverse} -d ${POSTGRES_DB:-wariverse}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: wariverse-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  core-api:
+    build:
+      context: ./services/core-api
+      dockerfile: Dockerfile
+    container_name: wariverse-core-api
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-wariverse}:${POSTGRES_PASSWORD:-change-me-in-prod}@db:5432/${POSTGRES_DB:-wariverse}
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "${CORE_API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/core-api:/app
+    # Migrations run on boot so a fresh clone is one command away from working.
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  redis_data:

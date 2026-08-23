@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# AI model weights
+services/ai-engine/models/*
+!services/ai-engine/models/.gitkeep
+
+# Media / evidence (never commit)
+storage/
+*.mp4
+*.avi
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
