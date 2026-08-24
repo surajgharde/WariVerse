@@ -85,6 +85,35 @@ ERROR_CATALOG: dict[str, tuple[int, str, str]] = {
         "त्या तारखेसाठी नोंदणी सुरू नाही.",
     ),
     "GATE_NOT_FOUND": (404, "That gate is not configured.", "ते द्वार नोंदवलेले नाही."),
+    # crowd (Phase 3)
+    "ZONE_NOT_FOUND": (404, "That zone does not exist.", "तो विभाग अस्तित्वात नाही."),
+    "CAMERA_NOT_FOUND": (404, "That camera is not configured.", "तो कॅमेरा नोंदवलेला नाही."),
+    "ALERT_NOT_FOUND": (404, "That alert does not exist.", "ती सूचना अस्तित्वात नाही."),
+    "ALERT_ALREADY_CLOSED": (
+        409,
+        "That alert has already been closed.",
+        "ती सूचना आधीच बंद केली आहे.",
+    ),
+    "CALIBRATION_INVALID": (
+        400,
+        "These four points do not describe a valid ground plane. Pick points that are not in a straight line.",
+        "हे चार बिंदू योग्य जमिनीचा नकाशा दर्शवत नाहीत. एका रेषेत नसलेले बिंदू निवडा.",
+    ),
+    "ZONE_NOT_CALIBRATED": (
+        409,
+        "This zone has no camera calibration, so its density figure would be fiction.",
+        "या विभागाचे कॅमेरा मापन झालेले नाही, त्यामुळे गर्दीचा आकडा विश्वासार्ह नाही.",
+    ),
+    "READING_REJECTED": (
+        422,
+        "This crowd reading could not be accepted.",
+        "ही गर्दीची नोंद स्वीकारता आली नाही.",
+    ),
+    "NO_CROWD_DATA": (
+        503,
+        "No crowd data is available right now. Treat the map as unknown, not as clear.",
+        "सध्या गर्दीची माहिती उपलब्ध नाही. नकाशा 'माहिती नाही' समजा, 'मोकळे' नाही.",
+    ),
 }
 
 _DEFAULT = ("INTERNAL_ERROR", 500)

@@ -1,0 +1,20 @@
+# The vision stack. Roughly 2 GB installed, so it is a separate layer and a
+# separate build stage: `CROWD_SOURCE=sim` never needs it, and a developer
+# should not download torch to run the tests.
+#
+# Build the vision image with:
+#   docker compose build --build-arg WITH_VISION=1 ai-engine
+#
+# CPU-only torch by default. The wheel index is pinned to the CPU build because
+# the default PyPI wheel drags in the CUDA runtime (~2.5 GB more) even on a
+# machine with no GPU. On a box that does have one, drop the --extra-index-url
+# line and install the CUDA build.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+-r requirements.txt
+
+torch==2.5.1
+torchvision==0.20.1
+ultralytics==8.3.55
+opencv-python-headless==4.10.0.84
+numpy==2.1.3

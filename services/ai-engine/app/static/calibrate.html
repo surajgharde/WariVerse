@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WariVerse — Camera Calibration / कॅमेरा मापन</title>
+<!--
+  Section 4/M2: "Build a small admin UI to click those 4 points on a still
+  frame. Without this the density number is fiction."
+
+  Deliberately one file with no build step and no dependencies. It is used a
+  handful of times per camera, by an engineer standing next to a tripod with a
+  tape measure, often on a phone hotspot in a temple courtyard. A React app
+  behind a bundler would be worse in every way that matters here.
+
+  It never touches the database. It fetches a still frame from the AI engine,
+  and POSTs the four point pairs to the core API, which solves and stores the
+  homography. Same boundary as everything else.
+-->
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --line: #30363d;
+    --ink: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --ok: #2ea043; --warn: #d4a017; --bad: #b3261e;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f6f8fa; --panel:#fff; --line:#d0d7de; --ink:#1f2328; --muted:#656d76; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 system-ui, "Noto Sans Devanagari", sans-serif;
+  }
+  header { padding: 18px 20px; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0 0 4px; font-size: 18px; }
+  .mr { color: var(--muted); font-size: 13px; }
+  main { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 18px; padding: 18px 20px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .stage { position: relative; line-height: 0; overflow: auto; border-radius: 8px; background: #000; }
+  .stage img { max-width: 100%; height: auto; display: block; cursor: crosshair; }
+  .stage svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  input, select, button, textarea {
+    width: 100%; padding: 8px 10px; border-radius: 7px; font: inherit;
+    background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+  }
+  button { background: var(--accent); color: #05080d; border: 0; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); font-weight: 400; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  th, td { text-align: left; padding: 5px 4px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; }
+  td input { padding: 4px 6px; font-size: 13px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .msg { margin-top: 12px; padding: 10px; border-radius: 7px; font-size: 13px; white-space: pre-wrap; }
+  .msg.ok { background: rgba(46,160,67,.14); border: 1px solid var(--ok); }
+  .msg.err { background: rgba(179,38,30,.14); border: 1px solid var(--bad); }
+  .msg.warn { background: rgba(212,160,23,.14); border: 1px solid var(--warn); }
+  .hint { background: rgba(88,166,255,.08); border: 1px solid var(--line);
+          border-radius: 8px; padding: 10px; font-size: 13px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Camera calibration</h1>
+  <div class="mr">कॅमेरा मापन — चार बिंदू निवडा</div>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="hint">
+      Click <strong>four points</strong> on the ground plane whose real-world distances you
+      know — the corners of a barricade rectangle, paving slabs, a taped square.
+      Then type each point's position in metres. The origin can be anywhere;
+      only the distances between the points matter.
+      <div class="mr" style="margin-top:6px">
+        जमिनीवरील चार बिंदू निवडा ज्यांतील प्रत्यक्ष अंतर तुम्हाला माहीत आहे,
+        आणि प्रत्येक बिंदूचे मीटरमधील स्थान भरा.
+      </div>
+    </div>
+
+    <div class="stage" id="stage">
+      <img id="frame" alt="Still frame from the selected camera">
+      <svg id="marks" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>#</th><th>Image x, y (px)</th><th>World x (m)</th><th>World y (m)</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="note">
+      Bottom-centre of a person's feet is the ground plane. Pick points on the floor,
+      never on a wall or a roofline — a homography maps one plane only.
+    </div>
+  </section>
+
+  <aside class="panel">
+    <label for="coreUrl">Core API</label>
+    <input id="coreUrl" value="http://localhost:8000">
+
+    <label for="token">Access token (administrator)</label>
+    <input id="token" type="password" placeholder="Bearer token from /auth/login">
+
+    <label for="camera">Camera</label>
+    <select id="camera"><option value="">— load cameras —</option></select>
+    <button class="ghost" id="loadCameras" style="margin-top:8px">Load cameras</button>
+    <button class="ghost" id="loadFrame" style="margin-top:8px">Grab still frame</button>
+
+    <label for="polygon">Zone outline (optional)</label>
+    <div class="note" style="margin-top:0">
+      Shift-click to trace the zone on the same frame. If you do, the server
+      computes <code>area_m2</code> from the calibration instead of trusting a
+      typed number — and every density figure divides by that area.
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost" id="clearPoly">Clear outline</button>
+      <span class="note" id="polyCount" style="margin:0;align-self:center">0 points</span>
+    </div>
+
+    <label style="display:flex;gap:8px;align-items:center;margin-top:12px">
+      <input type="checkbox" id="applyArea" style="width:auto">
+      <span>Overwrite the zone's area with the computed one</span>
+    </label>
+
+    <label for="note">Note (kept in the audit log)</label>
+    <input id="note" placeholder="e.g. barricade rectangle, 12.0 x 4.5 m, tape measured">
+
+    <button id="submit" style="margin-top:14px" disabled>Save calibration</button>
+    <button class="ghost" id="reset" style="margin-top:8px">Reset points</button>
+
+    <div id="msg"></div>
+  </aside>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const state = { points: [], polygon: [], frameW: 0, frameH: 0, cameras: [] };
+
+  const msg = (text, kind) => {
+    const box = $("msg");
+    box.className = "msg " + (kind || "ok");
+    box.textContent = text;
+  };
+
+  const core = () => $("coreUrl").value.replace(/\/+$/, "");
+  const headers = () => {
+    const token = $("token").value.trim();
+    const h = { "content-type": "application/json" };
+    if (token) h["authorization"] = "Bearer " + token.replace(/^Bearer\s+/i, "");
+    return h;
+  };
+
+  // -- point capture ------------------------------------------------------
+  $("frame").addEventListener("click", (event) => {
+    const img = event.currentTarget;
+    if (!img.naturalWidth) return;
+    const box = img.getBoundingClientRect();
+    // Convert the click back to source-image pixels: the homography is solved
+    // in the frame's own coordinates, not in whatever size the browser drew it.
+    const x = (event.clientX - box.left) * (img.naturalWidth / box.width);
+    const y = (event.clientY - box.top) * (img.naturalHeight / box.height);
+
+    if (event.shiftKey) {
+      state.polygon.push([round(x), round(y)]);
+      $("polyCount").textContent = state.polygon.length + " points";
+    } else if (state.points.length < 4) {
+      state.points.push({ image: [round(x), round(y)], world: [null, null] });
+    } else {
+      msg("Four points already picked. Reset to start again.", "warn");
+      return;
+    }
+    draw();
+  });
+
+  const round = (v) => Math.round(v * 10) / 10;
+
+  function draw() {
+    const img = $("frame");
+    const w = img.naturalWidth || 100, h = img.naturalHeight || 100;
+    state.frameW = w; state.frameH = h;
+
+    const marks = $("marks");
+    marks.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    const r = Math.max(4, w / 180);
+    let svg = "";
+
+    if (state.polygon.length > 1) {
+      svg += `<polygon points="${state.polygon.map(p => p.join(",")).join(" ")}"
+              fill="rgba(88,166,255,.18)" stroke="#58a6ff" stroke-width="${r / 2}"/>`;
+    }
+    if (state.points.length > 1) {
+      svg += `<polygon points="${state.points.map(p => p.image.join(",")).join(" ")}"
+              fill="rgba(212,160,23,.12)" stroke="#d4a017" stroke-width="${r / 2}"/>`;
+    }
+    state.points.forEach((p, i) => {
+      svg += `<circle cx="${p.image[0]}" cy="${p.image[1]}" r="${r}" fill="#d4a017" stroke="#000"/>`;
+      svg += `<text x="${p.image[0] + r * 1.6}" y="${p.image[1] - r}" fill="#fff"
+              font-size="${r * 3}" font-family="sans-serif">${i + 1}</text>`;
+    });
+    marks.innerHTML = svg;
+
+    renderRows();
+    $("submit").disabled = !ready();
+  }
+
+  function renderRows() {
+    $("rows").innerHTML = state.points.map((p, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${p.image[0]}, ${p.image[1]}</td>
+        <td><input data-i="${i}" data-axis="0" type="number" step="0.01"
+             value="${p.world[0] ?? ""}" placeholder="m"></td>
+        <td><input data-i="${i}" data-axis="1" type="number" step="0.01"
+             value="${p.world[1] ?? ""}" placeholder="m"></td>
+      </tr>`).join("");
+
+    $("rows").querySelectorAll("input").forEach((input) => {
+      input.addEventListener("input", (e) => {
+        const t = e.target;
+        const value = t.value === "" ? null : Number(t.value);
+        state.points[Number(t.dataset.i)].world[Number(t.dataset.axis)] = value;
+        $("submit").disabled = !ready();
+      });
+    });
+  }
+
+  const ready = () =>
+    state.points.length === 4 &&
+    state.points.every(p => p.world.every(v => v !== null && Number.isFinite(v))) &&
+    state.frameW > 0 &&
+    $("camera").value !== "";
+
+  // -- cameras ------------------------------------------------------------
+  $("loadCameras").addEventListener("click", async () => {
+    try {
+      const res = await fetch(core() + "/api/v1/cameras", { headers: headers() });
+      if (!res.ok) throw new Error(await describe(res));
+      state.cameras = await res.json();
+      $("camera").innerHTML = state.cameras.map(c =>
+        `<option value="${c.id}">${escapeHtml(c.name)} — ${c.zone_code || "?"}` +
+        `${c.is_calibrated ? " (calibrated)" : ""}</option>`).join("");
+      msg(`Loaded ${state.cameras.length} cameras.`, "ok");
+    } catch (err) {
+      msg("Could not load cameras: " + err.message, "err");
+    }
+  });
+
+  $("loadFrame").addEventListener("click", async () => {
+    const id = $("camera").value;
+    if (!id) { msg("Pick a camera first.", "warn"); return; }
+    // The still comes from this service — the core API has no video access.
+    const url = `/cameras/${encodeURIComponent(id)}/frame.jpg?t=${Date.now()}`;
+    const img = $("frame");
+    img.onload = () => { msg(`Frame loaded: ${img.naturalWidth}x${img.naturalHeight}px.`, "ok"); draw(); };
+    img.onerror = () => msg(
+      "No frame available. In simulation mode there is no live stream — " +
+      "point CROWD_SOURCE at a video or an RTSP feed to calibrate.", "warn");
+    img.src = url;
+  });
+
+  // -- submit -------------------------------------------------------------
+  $("submit").addEventListener("click", async () => {
+    const body = {
+      points: state.points.map(p => ({ image: p.image, world: p.world })),
+      frame_width: state.frameW,
+      frame_height: state.frameH,
+      note: $("note").value || null,
+    };
+    if (state.polygon.length >= 3) {
+      body.zone_polygon = state.polygon;
+      body.apply_zone_area = $("applyArea").checked;
+    }
+
+    try {
+      const res = await fetch(
+        core() + "/api/v1/cameras/" + encodeURIComponent($("camera").value) + "/calibration",
+        { method: "POST", headers: headers(), body: JSON.stringify(body) });
+      if (!res.ok) throw new Error(await describe(res));
+      const out = await res.json();
+      msg(
+        "Calibration saved.\n" +
+        `Anchor round-trip error: ${out.residual_m} m\n` +
+        (out.computed_zone_area_m2 ? `Computed zone area: ${out.computed_zone_area_m2} m²\n` : "") +
+        `Zone area now in use: ${out.zone_area_m2} m²` +
+        (out.zone_area_updated ? " (updated)" : " (unchanged)"), "ok");
+    } catch (err) {
+      msg("Rejected: " + err.message, "err");
+    }
+  });
+
+  $("reset").addEventListener("click", () => {
+    state.points = []; state.polygon = [];
+    $("polyCount").textContent = "0 points";
+    msg("Points cleared.", "ok"); draw();
+  });
+  $("clearPoly").addEventListener("click", () => {
+    state.polygon = [];
+    $("polyCount").textContent = "0 points";
+    draw();
+  });
+
+  // Surface the API's error envelope rather than a bare status code — the
+  // messages it returns explain what is wrong with the points.
+  async function describe(res) {
+    try {
+      const body = await res.json();
+      const e = body.error;
+      if (e) return `${e.code}: ${e.message}` + (e.details ? " " + JSON.stringify(e.details) : "");
+      return JSON.stringify(body);
+    } catch { return "HTTP " + res.status; }
+  }
+
+  const escapeHtml = (s) => String(s).replace(/[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  draw();
+})();
+</script>
+</body>
+</html>

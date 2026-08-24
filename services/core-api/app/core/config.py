@@ -61,6 +61,18 @@ class Settings(BaseSettings):
     ai_service_token: str = "dev-only-ai-service-token-change-me"
     # A reading older than this renders as stale in every UI (Section 4/M3).
     stale_reading_seconds: int = 90
+    # Redis holds the latest zone snapshot so the map does not query Timescale
+    # on every poll.  Five minutes is Section 4/M2 step 6; the TTL is also the
+    # guarantee that a dead AI service stops answering rather than lying.
+    density_cache_ttl_seconds: int = 300
+    # No heartbeat for this long and the camera is marked offline, which drops
+    # its zone's confidence rather than silently freezing the last reading.
+    camera_offline_seconds: int = 120
+    # One alert per zone per rule per cooldown.  A zone sitting at 5.2 p/m² for
+    # ten minutes is one situation, not sixty alerts.
+    alert_cooldown_seconds: int = 180
+    # Ingest batches are capped so a wedged AI engine cannot post a 100 MB body.
+    ingest_max_batch: int = 200
 
     # --- http ------------------------------------------------------------
     # NoDecode: the value arrives as a comma-separated string from .env, not as

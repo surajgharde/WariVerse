@@ -91,6 +91,9 @@ creates and migrates its own `wariverse_test` database. Set
 `REQUIRE_INTEGRATION=1` (as CI does) to turn "infrastructure missing" from a
 skip into a failure.
 
+The 10,000-pass scale test takes about 90 seconds and is marked `slow`. It runs
+in CI; skip it locally with `pytest -m "not slow"`.
+
 ---
 
 ## What is built
@@ -98,7 +101,7 @@ skip into a failure.
 | Phase | Module | State |
 | ----- | ------ | ----- |
 | 1 | Foundation — repo, Docker, schema, auth, RBAC, audit log, health, CI | **done** |
-| 2 | M1 Smart Darshan Pass — slots, QR, scan, dynamic reslotting | not started |
+| 2 | M1 Smart Darshan Pass — slots, QR, scan, dynamic reslotting | **done** |
 | 3 | M2 Crowd intelligence — sim engine, YOLOv8 pipeline, zone metrics | not started |
 | 4 | M3 Command Center — live map, alert feed, replay scrubber | not started |
 | 5 | M4 Incidents & SOS — dispatch, SLA, missing persons | not started |
@@ -134,6 +137,57 @@ phases need, so migrations do not churn as modules land.
 - **Observability** — JSON logs carrying the same `trace_id` the client sees,
   Prometheus metrics per route at `/metrics`, and `/health/deep` that reports
   *degraded* rather than dead when a non-essential dependency is down.
+
+### Phase 2 in detail
+
+- **Slots** — 04:00–23:00 in 30-minute windows, 38 a day, materialised on first
+  request and idempotent thereafter. Capacity comes from the configured
+  throughput (6,000/hour by default → 3,000 a slot).
+- **Walk-in reserve** — 25% of every slot, never offered online, and *rounded
+  up* so an uneven split favours the pilgrim without a smartphone. The grid
+  reports the reserve explicitly rather than hiding it inside a smaller
+  availability number.
+- **Booking** — one pass covers up to six people with one QR and one scan.
+  Capacity is claimed by a single conditional `UPDATE`, so a release-window
+  stampede cannot interleave a read and a write; the `no_oversubscription`
+  CHECK constraint is the backstop.
+- **QR** — two layers. An Ed25519-signed envelope (pass id, slot, group size,
+  gate) that any scanner verifies offline from a cached day key, plus an
+  8-digit rolling code on a 60-second TOTP step that the holder's device
+  computes locally. A screenshot forwarded on WhatsApp is stale within a
+  minute; a forged pass never verifies at all.
+- **Scanning** — `ALLOW / EARLY / EXPIRED / INVALID`, every outcome audited.
+  Fifteen minutes of early tolerance, because turning an early pilgrim away
+  sends them back into the crowd.
+- **Reslotting** — every five minutes the scheduler compares actual gate
+  throughput against plan. More than 20% short and downstream *unstarted*
+  passes shift by the time it takes to clear the backlog at the observed rate,
+  rounded up to whole slots and capped at three hours. Passes are never moved
+  earlier without opt-in, and every move queues a Marathi-first notification
+  that says why.
+- **No-shows** — passes expire 45 minutes after their slot ends and their seats
+  go back into the pool.
+
+Endpoints: `GET /slots`, `POST /passes`, `GET /passes/{id}`,
+`GET /passes/{id}/qr`, `POST /passes/{id}/cancel`, `POST /checkpoints/scan`,
+`GET /checkpoints/day-key`, `GET /checkpoints/bundle`, plus
+`POST /admin/reslot/run`, `POST /admin/passes/expire` and
+`PATCH /admin/slots/{id}` for the administrator.
+
+**Two deliberate deviations from the spec text**, both flagged rather than
+silently taken:
+
+1. Section 4/M1 asks for an "HMAC signature ... rotating every 60s" *and* a
+   scanner that "caches the day's public key". Those cannot be one mechanism —
+   there is no asymmetric rolling code. Authenticity is asymmetric (Ed25519,
+   every scanner, no shared secret); freshness is symmetric (TOTP from the
+   pass's own secret). Offline *freshness* checking needs the narrow
+   `GET /checkpoints/bundle` — the next few hours of passes for one gate, not
+   the whole day.
+2. Section 6 names Celery/RQ for async jobs. Two five-minute timers did not
+   justify a broker and a worker image, so `app/workers/scheduler.py` runs them
+   with a Redis single-runner lock. The jobs in `app/workers/jobs.py` are plain
+   callables; putting them behind Celery later is a decorator, not a rewrite.
 
 ---
 

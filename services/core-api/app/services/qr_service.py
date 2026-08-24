@@ -49,6 +49,8 @@ ROLLING_DIGITS = 8
 #: Accept one step either side — a cheap Android clock drifts, and a volunteer
 #: scanning at the boundary of a minute must not see a false rejection.
 ROLLING_DRIFT_STEPS = 1
+#: Tolerance for clock skew when validating the envelope's iat/exp.
+CLOCK_LEEWAY_SECONDS = 60
 
 _ISSUER = "wariverse-pass"
 
@@ -164,6 +166,10 @@ def verify_envelope(envelope: str, *, days: list[date] | None = None) -> Envelop
                 _public_key_pem(day),
                 algorithms=["EdDSA"],
                 issuer=_ISSUER,
+                # Field scanners and API servers drift. A minute of leeway stops
+                # a correct pass being rejected at a gate over a clock, without
+                # meaningfully extending the life of an expired one.
+                leeway=CLOCK_LEEWAY_SECONDS,
                 options={"require": ["exp", "iat", "pid"]},
             )
         except jwt.ExpiredSignatureError:

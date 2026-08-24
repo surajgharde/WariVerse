@@ -47,6 +47,7 @@ class AuditAction:
 
     ALERT_ACKNOWLEDGED = "alert.acknowledged"
     ALERT_ESCALATED = "alert.escalated"
+    ALERT_RESOLVED = "alert.resolved"
 
     INCIDENT_CREATED = "incident.created"
     INCIDENT_DISPATCHED = "incident.dispatched"
@@ -58,6 +59,7 @@ class AuditAction:
     BREACH_DELETED = "breach.deleted"
 
     CAMERA_CALIBRATED = "camera.calibrated"
+    CAMERA_UPDATED = "camera.updated"
     ZONE_UPDATED = "zone.updated"
     CONFIG_CHANGED = "config.changed"
     AUDIT_VIEWED = "audit.viewed"

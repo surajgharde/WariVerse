@@ -27,8 +27,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory, dispose_engine
 from app.core.permissions import Role
-from app.core.security import hash_password, hash_phone, normalise_phone
+from app.core.security import hash_password, hash_phone, normalise_phone, now_utc
 from app.models import Camera, Facility, Gate, User, Zone
+from app.services.calibration import solve_homography
 
 # Shri Vitthal-Rukmini Temple, Pandharpur.
 TEMPLE_LON, TEMPLE_LAT = 75.3306, 17.6797
@@ -175,6 +176,56 @@ async def seed_cameras(session: AsyncSession, zones: dict[str, Zone]) -> int:
     return created
 
 
+# A plausible 1920x1080 view down a corridor: the near edge fills the bottom of
+# the frame, the far edge is a narrower band higher up.  Real deployments click
+# these four points on an actual still; this exists so a fresh clone starts
+# calibrated rather than reporting densities it has not earned.
+DEMO_FRAME = (1920, 1080)
+DEMO_IMAGE_POINTS = [(200.0, 1000.0), (1720.0, 1000.0), (1180.0, 380.0), (740.0, 380.0)]
+
+
+def _demo_world_points(area_m2: float) -> list[tuple[float, float]]:
+    """A ground rectangle of the zone's own area, near edge twice the depth."""
+    depth = max(4.0, (area_m2 / 2.0) ** 0.5)
+    width = area_m2 / depth
+    return [(0.0, 0.0), (width, 0.0), (width, depth), (0.0, depth)]
+
+
+async def seed_calibration(session: AsyncSession, zones: dict[str, Zone]) -> int:
+    """Give every camera a homography.
+
+    Section 4/M2 is blunt about this: without a homography the density number is
+    fiction.  A demo that ships uncalibrated cameras is a demo that shows made-up
+    numbers with a straight face, so the seed refuses to do that.
+    """
+    by_id = {zone.id: zone for zone in zones.values()}
+    calibrated = 0
+    rows = await session.execute(select(Camera))
+    for camera in rows.scalars():
+        if camera.homography_matrix is not None:
+            continue
+        zone = by_id.get(camera.zone_id)
+        if zone is None:
+            continue
+
+        world = _demo_world_points(zone.area_m2)
+        homography = solve_homography(DEMO_IMAGE_POINTS, world)
+        camera.homography_matrix = {
+            **homography.to_json(),
+            "frame_width": DEMO_FRAME[0],
+            "frame_height": DEMO_FRAME[1],
+            "image_points": [list(p) for p in DEMO_IMAGE_POINTS],
+            "world_points": [list(p) for p in world],
+            "computed_zone_area_m2": zone.area_m2,
+            "note": "development seed — replace with a real four-point calibration before deployment",
+        }
+        camera.calibrated_at = now_utc()
+        calibrated += 1
+
+    await session.flush()
+    return calibrated
+
+
 async def seed_facilities(session: AsyncSession, zones: dict[str, Zone]) -> int:
     created = 0
     for ftype, name, name_mr, zone_code, dlon, dlat in FACILITIES:
@@ -201,6 +252,7 @@ async def main() -> None:
         zones = await seed_zones(session)
         gates = await seed_gates(session, zones)
         cameras = await seed_cameras(session, zones)
+        calibrated = await seed_calibration(session, zones)
         facilities = await seed_facilities(session, zones)
         await session.commit()
 
@@ -208,7 +260,7 @@ async def main() -> None:
     print(f"  users      +{users}")
     print(f"  zones      +{len(zones)}")
     print(f"  gates      +{gates}")
-    print(f"  cameras    +{cameras}")
+    print(f"  cameras    +{cameras}  ({calibrated} calibrated)")
     print(f"  facilities +{facilities}")
     print()
     print("Staff sign-in (POST /api/v1/auth/login):")

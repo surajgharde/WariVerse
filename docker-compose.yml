@@ -2,8 +2,8 @@
 #   docker compose up -d db redis      # infra only
 #   docker compose up                  # everything
 #
-# Phase 1 ships db, redis and core-api.  Later phases add ai-engine, notifier
-# and the three frontends; their service blocks are added as they are built.
+# Phase 1 ships db, redis and core-api; Phase 3 adds ai-engine.  Later phases
+# add notifier and the three frontends; their blocks land as they are built.
 
 services:
   db:
@@ -63,6 +63,67 @@ services:
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    restart: unless-stopped
+
+  scheduler:
+    # Same image as core-api, different entrypoint: the reslotting and no-show
+    # timers. Separate so restarting the API does not skip a reslot, and so
+    # scaling the API to N replicas does not run the jobs N times.
+    build:
+      context: ./services/core-api
+      dockerfile: Dockerfile
+    container_name: wariverse-scheduler
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-wariverse}:${POSTGRES_PASSWORD:-change-me-in-prod}@db:5432/${POSTGRES_DB:-wariverse}
+      REDIS_URL: redis://redis:6379/0
+      SERVICE_NAME: scheduler
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      core-api:
+        condition: service_started
+    volumes:
+      - ./services/core-api:/app
+    command: ["python", "-m", "app.workers.scheduler"]
+    # The image's healthcheck curls the API port; this process serves no HTTP,
+    # so inheriting it would mark a working scheduler unhealthy forever.
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+  ai-engine:
+    # Crowd analytics. A separate service because it is the process most likely
+    # to need a kick at 3 a.m., and Section 6 puts everything that must survive
+    # that on the other side of an HTTP boundary. It holds no database
+    # credentials and publishes through POST /api/v1/ingest/density only.
+    #
+    # The default build is the slim one: CROWD_SOURCE=sim needs no vision stack.
+    # For real cameras:  docker compose build --build-arg WITH_VISION=1 ai-engine
+    build:
+      context: ./services/ai-engine
+      dockerfile: Dockerfile
+      args:
+        WITH_VISION: ${WITH_VISION:-0}
+    container_name: wariverse-ai-engine
+    env_file: .env
+    environment:
+      CORE_API_URL: http://core-api:8000
+      SERVICE_NAME: ai-engine
+    ports:
+      - "${AI_ENGINE_PORT:-8100}:8100"
+    depends_on:
+      core-api:
+        condition: service_started
+    volumes:
+      - ./services/ai-engine:/app
+      # Drop sample crowd videos here and set CROWD_SOURCE=video.
+      - ./data/videos:/data/videos:ro
+    # Deliberately *not* depends_on: service_healthy for core-api. The engine
+    # is built to start before its dependency and buffer — making compose
+    # enforce the ordering would hide whether that actually works.
     restart: unless-stopped
 
 volumes:

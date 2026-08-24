@@ -1,0 +1,124 @@
+name: ai-engine
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/ai-engine/**"
+      - ".github/workflows/ai-engine.yml"
+  pull_request:
+    paths:
+      - "services/ai-engine/**"
+      - ".github/workflows/ai-engine.yml"
+
+concurrency:
+  group: ai-engine-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: services/ai-engine
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # No service containers. The whole pipeline — simulation, tracking, window
+    # aggregation, publishing — is testable without Postgres, Redis, a camera or
+    # the 2 GB vision stack, and keeping it that way is a design constraint
+    # rather than an accident.
+    env:
+      CROWD_SOURCE: sim
+      AI_SERVICE_TOKEN: test-ai-service-token
+      ENVIRONMENT: development
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: services/ai-engine/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Type check
+        run: mypy app
+
+      - name: Test
+        run: pytest -q -rs
+
+      - name: Import without the vision stack
+        # The default image ships no torch and no opencv. If anything grew a
+        # module-level import of either, sim mode would break in production and
+        # this is where it should be caught.
+        run: |
+          python -c "
+          import app.main, app.pipeline, app.sim_engine, app.detector, app.video
+          import sys
+          assert 'torch' not in sys.modules, 'torch was imported at module scope'
+          assert 'cv2' not in sys.modules, 'opencv was imported at module scope'
+          print('slim import surface is clean')
+          "
+
+  security:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ai-engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install security tooling
+        run: pip install bandit==1.8.0 pip-audit==2.7.3
+      - name: Static security scan
+        run: bandit -c pyproject.toml -r app -ll -q
+      - name: Dependency audit
+        run: pip-audit -r requirements.txt --strict
+
+  privacy:
+    # Section 12 is an architectural promise, so it gets a build step rather
+    # than a paragraph. These greps are crude on purpose: they fail loudly if
+    # someone adds a face/gait/re-identification dependency or an appearance
+    # embedding, and a deliberate exception has to be argued in a PR.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ai-engine
+    steps:
+      - uses: actions/checkout@v4
+      - name: No biometric dependencies
+        run: |
+          if grep -rniE 'face_recognition|deepface|insightface|dlib|facenet|torchreid|deep_sort|deepsort' \
+               requirements*.txt app/; then
+            echo "::error::A face-recognition or re-identification dependency was added."
+            exit 1
+          fi
+          echo "no biometric or re-identification dependencies"
+      - name: Track ids are not published
+        run: |
+          if grep -n 'track_id' app/models.py | grep -qv 'TrackSample\|track_id:\|track_id=' ; then
+            echo "::error::track_id may be leaking into a published payload."
+            exit 1
+          fi
+          python - <<'PY'
+          import ast, pathlib
+          src = pathlib.Path("app/models.py").read_text(encoding="utf-8")
+          tree = ast.parse(src)
+          for node in ast.walk(tree):
+              if isinstance(node, ast.FunctionDef) and node.name == "to_payload":
+                  keys = {n.value for n in ast.walk(node) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+                  banned = {"track_id", "heat_cells", "bbox", "embedding", "image"}
+                  leaked = keys & banned
+                  assert not leaked, f"to_payload publishes {leaked}"
+                  print("published payload keys:", sorted(keys))
+                  break
+          else:
+              raise SystemExit("ZoneObservation.to_payload not found")
+          PY

@@ -49,7 +49,7 @@ async def _load(session: AsyncSession) -> dict[str, Any]:
         for row in rows.scalars():
             _cache[row.key] = row.value.get("v")
         _cached_at = now_utc()
-    except Exception as exc:  # noqa: BLE001 - degradation path
+    except Exception as exc:
         logger.warning("system_config_read_failed", extra={"error": str(exc)})
     return _cache
 

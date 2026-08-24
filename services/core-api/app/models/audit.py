@@ -67,4 +67,12 @@ DEFAULT_CONFIG: dict[str, tuple[Any, str]] = {
     "missing_person_photo_retention_days": (30, "Retention for missing-person photos after closure."),
     "stagnation_alert_threshold": (0.70, "Stagnation index that alerts when density is above 3.0."),
     "counterflow_alert_threshold": (0.35, "Counter-flow ratio that indicates turbulent opposing streams."),
+    # Phase 3 — crowd engine.  Note what is *not* here: the density bands
+    # themselves.  Those are published crowd-safety figures and live in code, so
+    # nobody under pressure can make a critical zone look safe by editing a row.
+    "alert_cooldown_seconds": (180, "How long an open alert absorbs repeat triggers before it re-notifies."),
+    "camera_offline_seconds": (120, "Silence from a camera for this long marks it offline."),
+    "crowd_window_seconds": (10, "Aggregation window the AI engine reports on."),
+    "crowd_sample_fps": (2.0, "Frames per second sampled from each stream."),
+    "sim_baseline_multiplier": (1.0, "Scales the simulation engine's diurnal baseline."),
 }

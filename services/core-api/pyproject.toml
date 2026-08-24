@@ -56,6 +56,7 @@ addopts = "-q --strict-markers"
 markers = [
     "db: requires a live Postgres with PostGIS and TimescaleDB",
     "redis: requires a live Redis",
+    "slow: scale tests; run in CI, deselect locally with -m 'not slow'",
 ]
 
 [tool.bandit]
