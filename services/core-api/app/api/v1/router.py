@@ -14,7 +14,9 @@ from app.api.v1.routes import (
     auth,
     cameras,
     checkpoints,
+    command,
     crowd,
+    incidents,
     ingest,
     pass_admin,
     passes,
@@ -41,8 +43,12 @@ api_router.include_router(cameras.router)
 api_router.include_router(ingest.router)
 api_router.include_router(ws.router)
 
-# Phase 4 — command centre    (replay, kpis)
-# Phase 5 — incidents         (incidents, sos)
+# Phase 4 — command centre
+api_router.include_router(command.router)
+
+# Phase 5 — incidents, SOS, dispatch, missing persons
+api_router.include_router(incidents.router)
+
 # Phase 6 — breach            (breaches, review, clips)
 # Phase 8 — forecast          (forecast)
 # Phase 9 — palkhi, assistant (dindis, halt-towns, assistant)

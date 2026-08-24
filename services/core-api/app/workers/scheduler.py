@@ -33,6 +33,8 @@ SCHEDULE: list[tuple[str, Job, int]] = [
     ("expire_no_shows", jobs.scheduled_expiry, jobs.EXPIRY_INTERVAL_SECONDS),
     ("camera_watchdog", jobs.scheduled_camera_watchdog, jobs.CAMERA_WATCHDOG_INTERVAL_SECONDS),
     ("alert_maintenance", jobs.scheduled_alert_maintenance, jobs.ALERT_MAINTENANCE_INTERVAL_SECONDS),
+    ("incident_sla", jobs.scheduled_incident_sla, jobs.SLA_SWEEP_INTERVAL_SECONDS),
+    ("photo_purge", jobs.scheduled_photo_purge, jobs.PHOTO_PURGE_INTERVAL_SECONDS),
 ]
 
 

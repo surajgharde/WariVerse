@@ -2,8 +2,9 @@
 #   docker compose up -d db redis      # infra only
 #   docker compose up                  # everything
 #
-# Phase 1 ships db, redis and core-api; Phase 3 adds ai-engine.  Later phases
-# add notifier and the three frontends; their blocks land as they are built.
+# Phase 1 ships db, redis and core-api; Phase 3 adds ai-engine; Phase 4 adds
+# admin-console.  Later phases add notifier, the pilgrim PWA and the volunteer
+# app; their blocks land as they are built.
 
 services:
   db:
@@ -124,6 +125,21 @@ services:
     # Deliberately *not* depends_on: service_healthy for core-api. The engine
     # is built to start before its dependency and buffer — making compose
     # enforce the ordering would hide whether that actually works.
+    restart: unless-stopped
+
+  admin-console:
+    # The Temple Command Center (Phase 4). nginx serves the built assets and
+    # reverse-proxies /api to core-api, so the browser sees one origin and CORS
+    # never has to be right for the console to work.
+    build:
+      context: ./apps/admin-console
+      dockerfile: Dockerfile
+    container_name: wariverse-admin-console
+    ports:
+      - "${ADMIN_CONSOLE_PORT:-5173}:80"
+    depends_on:
+      core-api:
+        condition: service_started
     restart: unless-stopped
 
 volumes:

@@ -49,7 +49,11 @@ os.environ.update(
         "JWT_SECRET": "test-jwt-secret-not-used-anywhere-real-000000",
         "PHONE_HASH_SECRET": "test-phone-hash-secret-not-used-anywhere-real",
         "AI_SERVICE_TOKEN": "test-ai-service-token",
-        "CONTACT_ENCRYPTION_KEY": "dGVzdC1jb250YWN0LWtleS10ZXN0LWNvbnRhY3Qta2V5PQ==",
+        # Must be a real Fernet key: 32 raw bytes, url-safe base64. The obvious
+        # "looks like base64" placeholder decodes to 34 bytes and Fernet rejects
+        # it — which stays invisible until something actually encrypts, as the
+        # incident callback numbers in Phase 5 do.
+        "CONTACT_ENCRYPTION_KEY": "dGVzdC1jb250YWN0LWtleS10ZXN0LWNvbnRhY3Qta2U=",
         "OTP_DEBUG_ECHO": "true",
         "LOG_LEVEL": "WARNING",
     }

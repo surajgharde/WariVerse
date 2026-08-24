@@ -114,6 +114,48 @@ ERROR_CATALOG: dict[str, tuple[int, str, str]] = {
         "No crowd data is available right now. Treat the map as unknown, not as clear.",
         "सध्या गर्दीची माहिती उपलब्ध नाही. नकाशा 'माहिती नाही' समजा, 'मोकळे' नाही.",
     ),
+    # incidents (Phase 5)
+    # Note what is *not* in this block: there is no SOS_RATE_LIMITED. Section 9
+    # says never hard-block an SOS, so raising one over the limit attaches to the
+    # caller's existing open incident instead of failing. A person pressing the
+    # button four times is frightened, not abusive.
+    "INCIDENT_NOT_FOUND": (404, "That incident does not exist.", "ती घटना अस्तित्वात नाही."),
+    "INCIDENT_CLOSED": (
+        409,
+        "That incident is already closed.",
+        "ती घटना आधीच बंद केली आहे.",
+    ),
+    "INVALID_TRANSITION": (
+        409,
+        "An incident cannot move to that state from where it is now.",
+        "घटनेची सध्याची स्थिती पाहता ती त्या स्थितीत नेता येणार नाही.",
+    ),
+    "OUTCOME_NOTE_REQUIRED": (
+        400,
+        "Closing an incident needs a note saying what was actually done.",
+        "घटना बंद करताना प्रत्यक्षात काय केले याची नोंद आवश्यक आहे.",
+    ),
+    "RESPONDER_NOT_FOUND": (404, "That responder unit does not exist.", "ते पथक नोंदवलेले नाही."),
+    "RESPONDER_UNAVAILABLE": (
+        409,
+        "That unit is not available. Choose another, or free it from its current incident first.",
+        "ते पथक सध्या उपलब्ध नाही. दुसरे निवडा, किंवा त्याची सध्याची घटना आधी मोकळी करा.",
+    ),
+    "NO_RESPONDER_AVAILABLE": (
+        503,
+        "No unit of that type is available. Dispatch by radio and log it here afterwards.",
+        "त्या प्रकारचे कोणतेही पथक उपलब्ध नाही. रेडिओवरून पाठवा आणि नंतर येथे नोंद करा.",
+    ),
+    "MISSING_PERSON_NOT_FOUND": (
+        404,
+        "That missing-person case does not exist.",
+        "ती हरवलेल्या व्यक्तीची नोंद अस्तित्वात नाही.",
+    ),
+    "MISSING_PERSON_CLOSED": (
+        409,
+        "That case is already closed.",
+        "ती नोंद आधीच बंद केली आहे.",
+    ),
 }
 
 _DEFAULT = ("INTERNAL_ERROR", 500)

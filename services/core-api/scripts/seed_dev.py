@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import SessionFactory, dispose_engine
 from app.core.permissions import Role
 from app.core.security import hash_password, hash_phone, normalise_phone, now_utc
-from app.models import Camera, Facility, Gate, User, Zone
+from app.models import Camera, Facility, Gate, Responder, User, Zone
 from app.services.calibration import solve_homography
 
 # Shri Vitthal-Rukmini Temple, Pandharpur.
@@ -42,6 +42,24 @@ STAFF = [
     ("9000000003", "सुरक्षा अधिकारी", Role.SECURITY_OFFICER),
     ("9000000004", "स्वयंसेवक", Role.VOLUNTEER),
     ("9000000005", "वैद्यकीय पथक", Role.RESPONDER),
+]
+
+
+#: (call_sign, unit_type, d_lon, d_lat) — spread across the complex rather than
+#: parked on the temple, so the distance ranking has something to rank.
+RESPONDERS = [
+    ("AMB-1", "ambulance", 0.0011, 0.0004),
+    ("AMB-2", "ambulance", -0.0036, 0.0015),
+    ("MED-1", "medical_team", 0.0001, 0.0001),
+    ("MED-2", "medical_team", -0.0015, -0.0004),
+    ("POL-1", "police", 0.0012, 0.0005),
+    ("POL-2", "police", -0.0037, 0.0016),
+    ("FIRE-1", "fire", 0.0014, 0.0007),
+    ("VOL-1", "volunteer_squad", -0.0016, -0.0004),
+    ("VOL-2", "volunteer_squad", -0.0038, 0.0016),
+    ("VOL-3", "volunteer_squad", 0.0002, 0.0002),
+    ("DESK-1", "help_desk", 0.0012, 0.0004),
+    ("DESK-2", "help_desk", -0.0036, 0.0014),
 ]
 
 
@@ -246,6 +264,32 @@ async def seed_facilities(session: AsyncSession, zones: dict[str, Zone]) -> int:
     return created
 
 
+async def seed_responders(session: AsyncSession) -> int:
+    """Units on the board, so dispatch has something to suggest.
+
+    Every unit is seeded with a position and a fresh `last_ping_at`. A roster of
+    units with no known location would still rank — `dispatch_service.suggest`
+    keeps them and flags the gap — but it would demonstrate the degraded case
+    rather than the ordinary one on a first run.
+    """
+    created = 0
+    for call_sign, unit_type, dlon, dlat in RESPONDERS:
+        if await session.scalar(select(Responder).where(Responder.call_sign == call_sign)):
+            continue
+        session.add(
+            Responder(
+                call_sign=call_sign,
+                unit_type=unit_type,
+                status="available",
+                current_location=f"SRID=4326;POINT({TEMPLE_LON + dlon} {TEMPLE_LAT + dlat})",
+                last_ping_at=now_utc(),
+            )
+        )
+        created += 1
+    await session.flush()
+    return created
+
+
 async def main() -> None:
     async with SessionFactory() as session:
         users = await seed_users(session)
@@ -254,6 +298,7 @@ async def main() -> None:
         cameras = await seed_cameras(session, zones)
         calibrated = await seed_calibration(session, zones)
         facilities = await seed_facilities(session, zones)
+        responders = await seed_responders(session)
         await session.commit()
 
     print("WariVerse development seed complete")
@@ -262,6 +307,7 @@ async def main() -> None:
     print(f"  gates      +{gates}")
     print(f"  cameras    +{cameras}  ({calibrated} calibrated)")
     print(f"  facilities +{facilities}")
+    print(f"  responders +{responders}")
     print()
     print("Staff sign-in (POST /api/v1/auth/login):")
     for phone, name, role in STAFF:

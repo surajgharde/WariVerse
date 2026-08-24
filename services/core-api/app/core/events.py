@@ -34,6 +34,13 @@ DENSITY_UPDATED = "density.updated"
 ALERT_RAISED = "alert.raised"
 ALERT_UPDATED = "alert.updated"
 CAMERA_STATUS_CHANGED = "camera.status_changed"
+INCIDENT_RAISED = "incident.raised"
+INCIDENT_UPDATED = "incident.updated"
+INCIDENT_DISPATCHED = "incident.dispatched"
+#: Separate from `incident.updated` on purpose.  An SLA breach is the one
+#: incident event that means nobody acted, so a console must be able to treat it
+#: differently from the twenty status changes that mean somebody did.
+INCIDENT_SLA_BREACHED = "incident.sla_breached"
 
 
 def _encode(value: Any) -> Any:

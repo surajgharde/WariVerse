@@ -19,7 +19,14 @@ from app.core.logging import get_logger, set_trace_id
 from app.core.redis_client import aw, redis
 from app.core.security import now_utc
 from app.models import Zone
-from app.services import alert_service, config_service, crowd_service, pass_service, reslot_service
+from app.services import (
+    alert_service,
+    config_service,
+    crowd_service,
+    incident_service,
+    pass_service,
+    reslot_service,
+)
 
 logger = get_logger(__name__)
 
@@ -33,6 +40,16 @@ CAMERA_WATCHDOG_INTERVAL_SECONDS = 30
 #: The escalation clock's finest granularity is `alert_escalate_seconds` (60s by
 #: default), so checking twice as often as that is enough to be punctual.
 ALERT_MAINTENANCE_INTERVAL_SECONDS = 30
+
+#: The shortest SLA is three minutes (critical).  Sweeping every 15 seconds means
+#: a breach is visible within 8% of the window it breached, rather than being
+#: announced up to a minute after the fact — on a three-minute clock, a
+#: minute-granularity sweep is a third of the deadline spent not knowing.
+SLA_SWEEP_INTERVAL_SECONDS = 15
+
+#: Photo retention is measured in days, so this runs hourly.  Anything more
+#: eager is a database scan every few minutes to find nothing.
+PHOTO_PURGE_INTERVAL_SECONDS = 3600
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +232,69 @@ async def run_alert_maintenance(at: datetime | None = None) -> AlertMaintenanceR
     return AlertMaintenanceRun(ran_at=moment, escalated=len(escalations), paged=paged, expired=expired)
 
 
+@dataclass(frozen=True, slots=True)
+class SlaSweepRun:
+    ran_at: datetime
+    breached: int
+    worst_overdue_seconds: float
+
+
+async def run_incident_sla(at: datetime | None = None) -> SlaSweepRun:
+    """Mark incidents nobody was sent to in time, and say so on the socket.
+
+    The breach is published as its own event type rather than as a generic
+    update.  Every other incident event means somebody did something; this one
+    means nobody did, and a console that cannot tell those apart will render the
+    one message an operator most needs to notice as the twentieth row of a busy
+    feed.
+    """
+    set_trace_id()
+    moment = at or now_utc()
+    outbound: list[tuple[str, dict[str, object]]] = []
+
+    async with SessionFactory() as session:
+        breaches = await incident_service.sweep_sla(session, at=moment)
+        for breach in breaches:
+            incident = breach.incident
+            zone = await session.get(Zone, incident.zone_id) if incident.zone_id else None
+            outbound.append(
+                (
+                    events.INCIDENT_SLA_BREACHED,
+                    incident_service.event_payload(
+                        incident,
+                        zone=zone,
+                        extra={"overdue_seconds": round(breach.overdue_seconds, 1)},
+                    ),
+                )
+            )
+        await session.commit()
+
+    await events.publish_many(outbound)
+    worst = max((b.overdue_seconds for b in breaches), default=0.0)
+    if breaches:
+        logger.warning(
+            "incident_sla_sweep",
+            extra={"breached": len(breaches), "worst_overdue_seconds": round(worst, 1)},
+        )
+    return SlaSweepRun(ran_at=moment, breached=len(breaches), worst_overdue_seconds=worst)
+
+
+async def run_photo_purge(at: datetime | None = None) -> int:
+    """Drop missing-person photo references past their retention (Section 12).
+
+    Returns the count.  The object-store deletion is not done here on purpose —
+    `purge_missing_person_photos` explains why: a purge that half-succeeds should
+    leave the row pointing at the blob rather than orphan it.
+    """
+    set_trace_id()
+    async with SessionFactory() as session:
+        purged = await incident_service.purge_missing_person_photos(session, at=at)
+        await session.commit()
+    if purged:
+        logger.info("missing_person_photos_purged", extra={"count": len(purged)})
+    return len(purged)
+
+
 async def scheduled_reslot() -> None:
     if not await _acquire("reslot", RESLOT_INTERVAL_SECONDS - 5):
         return
@@ -237,3 +317,17 @@ async def scheduled_alert_maintenance() -> None:
     if not await _acquire("alert_maintenance", ALERT_MAINTENANCE_INTERVAL_SECONDS - 5):
         return
     await run_alert_maintenance()
+
+
+async def scheduled_incident_sla() -> None:
+    # A 10-second lock TTL on a 15-second interval: short enough that a replica
+    # dying mid-sweep costs one tick rather than blocking the next one.
+    if not await _acquire("incident_sla", SLA_SWEEP_INTERVAL_SECONDS - 5):
+        return
+    await run_incident_sla()
+
+
+async def scheduled_photo_purge() -> None:
+    if not await _acquire("photo_purge", PHOTO_PURGE_INTERVAL_SECONDS - 60):
+        return
+    await run_photo_purge()

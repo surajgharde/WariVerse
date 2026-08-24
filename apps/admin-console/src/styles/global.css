@@ -1,0 +1,1037 @@
+/* Console layout and components.
+ *
+ * Density: 14px base, tabular numerals, metrics in mono (Section 10). Every
+ * layout here is tested against Marathi, which runs 20-40% longer than
+ * English — hence the generous `min-width` on labels and the wrapping rather
+ * than truncating on every string that carries a fact.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  line-height: 1.45;
+  /* Tabular numerals everywhere: a digit changing must read as a change of
+   * value, not as the whole row shifting sideways. */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+/* Visible focus. A control room is operated by keyboard more often than
+ * designers assume, and at 03:00 the mouse is not where anyone left it. */
+:focus-visible {
+  outline: 2px solid var(--saffron);
+  outline-offset: 2px;
+}
+
+/* --- shell ------------------------------------------------------------- */
+.console {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.console__body {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) 1fr minmax(280px, 360px);
+  flex: 1;
+  min-height: 0;
+}
+
+.boot {
+  display: grid;
+  place-content: center;
+  gap: var(--sp-4);
+  height: 100%;
+  color: var(--text-dim);
+}
+
+.boot--error {
+  color: var(--text);
+  text-align: center;
+}
+
+/* --- top bar ------------------------------------------------------------ */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4);
+  background: var(--indigo);
+  border-bottom: 1px solid var(--border-strong);
+  flex-wrap: wrap;
+}
+
+.topbar__brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+
+.topbar__subtitle {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.topbar__spacer {
+  flex: 1;
+}
+
+.topbar__user {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.topbar__role {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+/* --- badges -------------------------------------------------------------- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.badge--stale {
+  background: var(--level-unknown);
+  color: var(--paper);
+}
+
+/* Not-live sources are loud. An operator must never mistake the simulation for
+ * the temple, and a discreet grey label is exactly how that mistake happens. */
+.badge--source-sim {
+  background: var(--saffron);
+  color: var(--ink);
+}
+
+.badge--source-video {
+  background: var(--amber);
+  color: var(--ink);
+}
+
+.badge--source-live {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+}
+
+.badge--conn-open {
+  color: var(--tulsi);
+  background: transparent;
+}
+
+.badge--conn-connecting,
+.badge--conn-reconnecting {
+  color: var(--amber);
+  background: transparent;
+}
+
+.badge--conn-closed {
+  background: var(--sindoor);
+  color: var(--paper);
+}
+
+.badge--online {
+  color: var(--tulsi);
+  background: transparent;
+}
+.badge--degraded {
+  color: var(--amber);
+  background: transparent;
+}
+.badge--offline {
+  background: var(--sindoor);
+  color: var(--paper);
+}
+
+/* --- KPI strip ----------------------------------------------------------- */
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.kpi-strip--loading {
+  display: block;
+  padding: var(--sp-4);
+  color: var(--text-dim);
+}
+
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface);
+  border: none;
+  border-top: 3px solid transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease);
+}
+
+.kpi:hover {
+  background: var(--surface-2);
+}
+
+.kpi--ok {
+  border-top-color: var(--ok);
+}
+.kpi--watch {
+  border-top-color: var(--watch);
+}
+.kpi--breach {
+  border-top-color: var(--breach);
+}
+.kpi--unknown {
+  border-top-color: var(--unknown);
+}
+
+/* Stale renders greyed. Section 4/M3: operators must never act on a number
+ * they think is live but isn't. */
+.kpi--stale .kpi__number,
+.kpi--unmeasured .kpi__number {
+  color: var(--text-faint);
+}
+
+.kpi__label {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  /* Marathi labels are longer; let them wrap rather than clip. */
+  min-height: 2.2em;
+}
+
+.kpi__value {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  font-family: var(--font-mono);
+}
+
+.kpi__number {
+  font-size: var(--fs-metric);
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.kpi__target {
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+.kpi__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+.kpi__unknown {
+  color: var(--unknown);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.kpi__note {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+
+.kpi__detail {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.kpi__detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.kpi__detail-row dt {
+  color: var(--text-faint);
+}
+
+.kpi__detail-row dd {
+  margin: 0;
+  font-family: var(--font-mono);
+}
+
+/* --- change strip -------------------------------------------------------- */
+.changes {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  min-height: 40px;
+}
+
+.changes__title {
+  margin: 0;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.changes__scroll {
+  display: flex;
+  gap: var(--sp-4);
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding-bottom: 2px;
+}
+
+.changes__empty {
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.change {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.change--critical .change__mark {
+  color: var(--sindoor);
+}
+.change--warning .change__mark {
+  color: var(--amber);
+}
+.change--info .change__mark {
+  color: var(--text-faint);
+}
+
+.change__time {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.change--truncated {
+  color: var(--amber);
+  font-style: italic;
+}
+
+/* --- rails --------------------------------------------------------------- */
+.rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+}
+
+.rail--left {
+  border-right: 1px solid var(--border);
+}
+
+.rail--right {
+  border-left: 1px solid var(--border);
+}
+
+.rail__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.rail__head h2 {
+  margin: 0;
+  font-size: var(--fs-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+.rail__count {
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+}
+
+.rail__body {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.empty {
+  padding: var(--sp-5) var(--sp-4);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+/* --- zone rows ----------------------------------------------------------- */
+.zone-row {
+  display: grid;
+  grid-template-columns: 3px 1fr auto;
+  gap: var(--sp-2);
+  align-items: center;
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  cursor: pointer;
+}
+
+.zone-row:hover {
+  background: var(--surface-2);
+}
+
+.zone-row--selected {
+  background: var(--surface-3);
+}
+
+.zone-row__bar {
+  align-self: stretch;
+  border-radius: 2px;
+  transition: background var(--dur-map) var(--ease);
+}
+
+.zone-row__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.zone-row__name {
+  font-size: var(--fs-sm);
+}
+
+.zone-row__code {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.zone-row__metrics {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.zone-row__metrics--unknown {
+  color: var(--unknown);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.zone-row--unknown .zone-row__name {
+  color: var(--text-dim);
+}
+
+.zone-row__flow {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+.zone-row__detail {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.zone-row__note {
+  color: var(--amber);
+}
+
+/* --- centre -------------------------------------------------------------- */
+.centre {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.tab {
+  padding: var(--sp-2) var(--sp-4);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+}
+
+.tab--active {
+  color: var(--text);
+  border-bottom-color: var(--saffron);
+}
+
+.centre__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* --- map ----------------------------------------------------------------- */
+.map {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.map__canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.map__legend {
+  position: absolute;
+  top: var(--sp-3);
+  left: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  background: rgb(13 18 32 / 0.85);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.legend__item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.legend__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+
+/* Unknown is visually distinct from the ramp, not a fifth colour on it. */
+.legend__swatch--unknown {
+  border: 1px dashed var(--text-faint);
+}
+
+/* --- alerts -------------------------------------------------------------- */
+.alert {
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+}
+
+.alert--info {
+  border-left-color: var(--text-faint);
+}
+.alert--warning {
+  border-left-color: var(--amber);
+}
+.alert--critical {
+  border-left-color: var(--sindoor);
+}
+
+.alert--acknowledged {
+  opacity: 0.65;
+}
+
+/* Section 10: pulse once on arrival, then hold. */
+@keyframes alert-arrive {
+  from {
+    background: rgb(196 43 28 / 0.28);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+.alert--arrived {
+  animation: alert-arrive 1.2s var(--ease) 1;
+}
+
+/* Unacknowledged critical, past the escalation threshold. A static ring rather
+ * than a blink — it must be impossible to miss and possible to work next to. */
+.alert--escalating {
+  background: rgb(196 43 28 / 0.12);
+  box-shadow: inset 0 0 0 1px var(--sindoor);
+}
+
+.alert--paging {
+  background: rgb(196 43 28 / 0.2);
+  box-shadow: inset 0 0 0 2px var(--sindoor);
+}
+
+.alert__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+}
+
+.alert__severity {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+}
+
+.alert--critical .alert__severity {
+  color: var(--sindoor);
+}
+.alert--warning .alert__severity {
+  color: var(--amber);
+}
+
+.alert__zone {
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+
+.alert__age {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+
+.alert__type {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-md);
+  text-transform: capitalize;
+}
+
+.alert__trigger,
+.alert__confidence {
+  margin: 2px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.alert__trigger-value {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.alert__trigger-threshold {
+  color: var(--text-faint);
+}
+
+.alert__action {
+  margin: var(--sp-2) 0 0;
+  padding: var(--sp-2);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.alert__escalation {
+  margin: var(--sp-2) 0 0;
+  color: var(--sindoor);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.alert__acknowledged {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--tulsi);
+}
+
+.alert__error {
+  margin: var(--sp-2) 0 0;
+  color: var(--sindoor);
+  font-size: var(--fs-xs);
+}
+
+.alert__actions {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+
+/* --- buttons ------------------------------------------------------------- */
+.btn {
+  padding: var(--sp-1) var(--sp-3);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--border-strong);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  background: var(--saffron);
+  border-color: var(--saffron);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: #f2743d;
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+
+.btn--live {
+  border-color: var(--tulsi);
+  color: var(--tulsi);
+}
+
+.btn--wide {
+  width: 100%;
+  padding: var(--sp-2);
+}
+
+/* --- replay -------------------------------------------------------------- */
+.replay {
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.replay__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.replay__head h2 {
+  margin: 0;
+  font-size: var(--fs-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+.replay__window {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+.replay__window select {
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 2px var(--sp-2);
+  font: inherit;
+}
+
+/* The track: one notch per minute, coloured by the worst zone in it. The shape
+ * of a surge is legible before anybody drags anything. */
+.replay__track {
+  display: flex;
+  gap: 1px;
+  height: 28px;
+  margin: var(--sp-3) 0 var(--sp-1);
+}
+
+.replay__notch {
+  flex: 1;
+  min-width: 2px;
+  border: none;
+  border-radius: 1px;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.75;
+  transition: opacity var(--dur-ui) var(--ease);
+}
+
+.replay__notch:hover {
+  opacity: 1;
+}
+
+.replay__notch--current {
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--paper);
+}
+
+.replay__range {
+  width: 100%;
+  accent-color: var(--saffron);
+}
+
+.replay__foot {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-4);
+  margin-top: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  flex-wrap: wrap;
+}
+
+.replay__clock {
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+
+.replay__critical {
+  color: var(--sindoor);
+}
+
+.replay__unknown {
+  color: var(--unknown);
+}
+
+.replay__note {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+
+.replay__error {
+  color: var(--sindoor);
+  font-size: var(--fs-sm);
+}
+
+/* --- cameras ------------------------------------------------------------- */
+.cameras {
+  padding: var(--sp-4);
+  overflow-y: auto;
+}
+
+.cameras__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.cameras__tally {
+  font-size: var(--fs-lg);
+}
+
+.cameras__warn {
+  color: var(--amber);
+  font-size: var(--fs-sm);
+}
+
+.cameras__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--sp-3);
+}
+
+.camera {
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+
+.camera--online {
+  border-left-color: var(--tulsi);
+}
+.camera--degraded {
+  border-left-color: var(--amber);
+}
+.camera--offline {
+  border-left-color: var(--sindoor);
+}
+
+.camera__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.camera__name {
+  font-size: var(--fs-sm);
+}
+
+.camera__zone,
+.camera__meta {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.camera__uncalibrated {
+  margin: var(--sp-2) 0 0;
+  color: var(--amber);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.camera__tripwire {
+  margin: var(--sp-1) 0 0;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+/* --- sign in ------------------------------------------------------------- */
+.signin {
+  display: grid;
+  place-content: center;
+  height: 100%;
+  padding: var(--sp-4);
+}
+
+.signin__card {
+  width: min(360px, 90vw);
+  padding: var(--sp-6);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  border-top: 3px solid var(--saffron);
+}
+
+.signin__title {
+  margin: 0;
+  font-size: var(--fs-xl);
+}
+
+.signin__subtitle {
+  margin: var(--sp-1) 0 var(--sp-5);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.signin__prompt {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.field {
+  display: block;
+  margin-bottom: var(--sp-3);
+}
+
+.field span {
+  display: block;
+  margin-bottom: var(--sp-1);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.field input {
+  width: 100%;
+  padding: var(--sp-2);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+}
+
+.signin__error {
+  margin: 0 0 var(--sp-3);
+  padding: var(--sp-2);
+  background: rgb(196 43 28 / 0.15);
+  border-left: 2px solid var(--sindoor);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+/* --- narrow screens ------------------------------------------------------
+ * Not a phone layout — this console is a desk. But a 1280px laptop is a real
+ * control-room machine, and the rails must not squeeze the map into a strip.
+ */
+@media (max-width: 1400px) {
+  .console__body {
+    grid-template-columns: minmax(200px, 240px) 1fr minmax(240px, 300px);
+  }
+
+  .kpi__number {
+    font-size: var(--fs-xl);
+  }
+}
+
+@media (max-width: 1100px) {
+  .console__body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr auto;
+    overflow-y: auto;
+  }
+
+  .kpi-strip {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .map {
+    min-height: 420px;
+  }
+}

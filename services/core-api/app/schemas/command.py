@@ -26,6 +26,8 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
+from pydantic import Field
+
 from app.models.crowd import DensityLevel
 from app.schemas.common import ApiModel
 
@@ -63,7 +65,7 @@ class Kpi(ApiModel):
     #: Per-KPI breakdown — zone coverage, camera counts, scan totals. The card
     #: shows this on expand; the operator asking "where does that come from"
     #: should not have to ask twice.
-    detail: dict[str, Any] = {}
+    detail: dict[str, Any] = Field(default_factory=dict)
 
     note: str | None = None
     note_mr: str | None = None
@@ -148,7 +150,7 @@ class ReplayFrame(ApiModel):
     #: Zones with no reading in this minute, by code. The scrubber greys them
     #: rather than holding the previous colour, because holding the last known
     #: colour through a pipeline outage is how a replay lies.
-    unknown_zones: list[str] = []
+    unknown_zones: list[str] = Field(default_factory=list)
     open_alerts: int = 0
     critical_alerts: int = 0
 
@@ -164,3 +166,36 @@ class ReplayWindow(ApiModel):
     generated_at: datetime
     note: str
     note_mr: str
+
+
+# ---------------------------------------------------------------------------
+# console bootstrap
+# ---------------------------------------------------------------------------
+class ConsoleConfig(ApiModel):
+    """The handful of server-side numbers the console must not guess at.
+
+    Every one of these is operator-tunable in `system_config` or environment
+    config. A console that hardcodes them drifts from the server the first time
+    an administrator changes one — and drift here is visible as an alert card
+    that turns red before the server escalates, which is precisely the kind of
+    small lie that costs an operator their trust in the screen.
+    """
+
+    #: Seconds an unacknowledged CRITICAL waits before it escalates visually.
+    alert_escalate_seconds: int
+    #: Seconds before it pages the next role in the chain.
+    alert_page_seconds: int
+    #: A reading older than this renders greyed with a stale badge.
+    stale_reading_seconds: int
+    #: How often the AI engine reports, so the console can size its own polling
+    #: instead of hammering an endpoint that changes every ten seconds.
+    crowd_window_seconds: int
+    #: live | video | sim — the console shows this, because an operator must
+    #: always know whether they are watching the temple or a simulation.
+    crowd_source: str
+    #: Density band boundaries in people/m², so the map legend and the server
+    #: agree on where green becomes amber.
+    density_thresholds: dict[str, float]
+    #: Open/acknowledged/escalated counts for the feed header.
+    live_alert_counts: dict[str, int]
+    server_time: datetime

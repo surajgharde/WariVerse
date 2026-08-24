@@ -445,8 +445,15 @@ async def series_all(
 
     Same two-part read as `series`: the continuous aggregate for everything
     settled, plus the raw hypertable for the last couple of minutes the
-    aggregate policy has not caught up with.  The anti-join in `HAVING` keeps
-    a bucket from appearing twice when the policy refreshes mid-query.
+    aggregate policy has not caught up with.  The anti-join keeps a bucket from
+    appearing twice when the policy refreshes mid-query.
+
+    That anti-join sits in the outer `WHERE` over a derived table rather than in
+    a `HAVING` on the aggregate itself.  It has to: a correlated subquery inside
+    `HAVING` cannot reach `d.time`, because `time_bucket(...)` is the grouped
+    expression and the raw column is not grouped.  Postgres rejects it outright
+    ("subquery uses ungrouped column"), so the grouping is closed off first and
+    the duplicate check applied to its result.
     """
     end = until or now_utc()
     result = await session.execute(
@@ -457,19 +464,28 @@ async def series_all(
             FROM density_readings_1min
             WHERE bucket >= :since AND bucket <= :until
             UNION ALL
-            SELECT d.zone_id,
-                   time_bucket(INTERVAL '1 minute', d.time) AS bucket,
-                   AVG(d.density), MAX(d.density), AVG(d.person_count),
-                   MAX(d.stagnation_index), MAX(d.counterflow_ratio),
-                   AVG(d.confidence), COUNT(*)
-            FROM density_readings d
-            WHERE d.time >= GREATEST(:since, now() - INTERVAL '2 minutes')
-              AND d.time <= :until
-            GROUP BY d.zone_id, time_bucket(INTERVAL '1 minute', d.time)
-            HAVING NOT EXISTS (
+            SELECT live.zone_id, live.bucket, live.avg_density, live.peak_density,
+                   live.avg_person_count, live.peak_stagnation, live.peak_counterflow,
+                   live.avg_confidence, live.sample_count
+            FROM (
+                SELECT d.zone_id AS zone_id,
+                       time_bucket(INTERVAL '1 minute', d.time) AS bucket,
+                       AVG(d.density) AS avg_density,
+                       MAX(d.density) AS peak_density,
+                       AVG(d.person_count) AS avg_person_count,
+                       MAX(d.stagnation_index) AS peak_stagnation,
+                       MAX(d.counterflow_ratio) AS peak_counterflow,
+                       AVG(d.confidence) AS avg_confidence,
+                       COUNT(*) AS sample_count
+                FROM density_readings d
+                WHERE d.time >= GREATEST(:since, now() - INTERVAL '2 minutes')
+                  AND d.time <= :until
+                GROUP BY d.zone_id, time_bucket(INTERVAL '1 minute', d.time)
+            ) live
+            WHERE NOT EXISTS (
                 SELECT 1 FROM density_readings_1min m
-                WHERE m.zone_id = d.zone_id
-                  AND m.bucket = time_bucket(INTERVAL '1 minute', d.time)
+                WHERE m.zone_id = live.zone_id
+                  AND m.bucket = live.bucket
             )
             ORDER BY 1, 2
             """
