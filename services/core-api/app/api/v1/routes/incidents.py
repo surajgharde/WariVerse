@@ -1,53 +1,46 @@
-"""Incidents, SOS, dispatch and missing persons (Section 4/M4, Phase 5).
+"""Incidents, SOS and dispatch (Section 4/M4, Phase 5).
 
-    POST /sos                        GET  /sos/{reference}
-    POST /incidents                  GET  /incidents
-    GET  /incidents/{id}             PATCH /incidents/{id}
+    POST /sos                        POST /incidents
+    GET  /incidents                  GET  /incidents/{id}
+    PATCH /incidents/{id}            POST /incidents/{id}/dispatch
     GET  /incidents/{id}/dispatch-options
-    POST /incidents/{id}/dispatch
     GET  /responders                 POST /responders/{id}/ping
-    POST /missing-persons            GET  /missing-persons
-    GET  /missing-persons/{id}       PATCH /missing-persons/{id}
 
-Three rules live in this file rather than in the service, because all three are
-about *who is asking* and the service does not know that.
+Three things this module is careful about.
 
-**A client never names its own provenance.** `_resolve_source` derives `source`
-from the caller's role and ignores what the body asked for. Post-Wari review
-turns on the difference between a pilgrim pressing a button and an operator
-logging a phone call, and a field the client controls is not evidence of
-anything.
+**A client never chooses its own `source`.** `_resolve_source` derives it from
+the caller's role and the route they came in on. Source is not decoration: an
+open SOS is found by `source == "pilgrim_sos"`, so a pilgrim filing a
+lost-umbrella report under that source would make their *next* panic press
+attach itself to the umbrella. Provenance a caller can set is provenance that
+means nothing.
 
-**A volunteer may work the small stuff and nothing else.** Section 2 gives
-`incident:update_low` to volunteers and `incident:update_any` to officers.
-`_guard_update` is where that becomes real — including the part that matters
-most, which is that a volunteer cannot re-grade a critical incident down and
-then close it through the low-severity door.
+**A pilgrim can raise an incident and read back only their own.** `/incidents`
+requires `incident:view`, which pilgrims do not have. `GET /incidents/{id}` lets
+the reporter read the one they filed — they are entitled to know what happened
+to their own emergency, and to nothing else.
 
-**A pilgrim reads their own emergency and no one else's.** `GET /sos/{ref}`
-matches on the caller's own phone hash. There is no route on which a pilgrim
-can enumerate incidents, because "who needed help at the Wari and where" is a
-list this system should not be able to hand out.
+**The SOS route cannot fail on a rate limit.** See `incident_service.raise_sos`.
+There is no 429 on this path by construction.
 """
 
 from __future__ import annotations
 
 import uuid
-from dataclasses import asdict
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import case, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import events
 from app.core.db import get_session
 from app.core.deps import Actor, require
 from app.core.errors import AppError
-from app.core.permissions import Permission
+from app.core.permissions import Permission, Role
 from app.core.security import now_utc
-from app.models import Incident, MissingPerson, Responder, Zone
-from app.models.incidents import IncidentSeverity, IncidentStatus
+from app.models import Incident, Responder, Zone
+from app.models.incidents import IncidentSeverity, IncidentStatus, IncidentType
 from app.schemas.common import ErrorResponse, Page
 from app.schemas.incidents import (
     DispatchOptions,
@@ -55,11 +48,7 @@ from app.schemas.incidents import (
     IncidentCreate,
     IncidentEventOut,
     IncidentOut,
-    IncidentSource,
     IncidentUpdate,
-    MissingPersonCreate,
-    MissingPersonOut,
-    MissingPersonUpdate,
     ResponderOut,
     ResponderPing,
     SosAck,
@@ -70,121 +59,78 @@ from app.services import dispatch_service, incident_service
 
 router = APIRouter(tags=["incidents"], responses={404: {"model": ErrorResponse}})
 
-#: Severities a holder of `incident:update_low` may act on.
-#:
-#: `normal` is included and `high` is not. The line is drawn at the ten-minute
-#: SLA: a volunteer closing a facility failure or a lost item is the system
-#: working, and a volunteer closing a medical emergency is the system failing in
-#: the specific way that gets somebody hurt. Widening this tuple is a decision
-#: someone should have to make on purpose.
-LOW_SEVERITIES: frozenset[str] = frozenset(
-    {str(IncidentSeverity.LOW), str(IncidentSeverity.NORMAL)}
-)
-
-#: Which provenance each role is allowed to claim, first entry being the
-#: default. Absent from every list: `ai_alert`, which only the AI ingest path
-#: may produce, and `pilgrim_sos`, which only `POST /sos` may produce.
-_ALLOWED_SOURCES: dict[Permission, tuple[IncidentSource, ...]] = {
-    # Control room and above: their own entry, or a call they took on the radio
-    # or the phone on somebody else's behalf.
-    Permission.INCIDENT_UPDATE_ANY: ("control_room", "phone_call", "volunteer_report"),
-    Permission.INCIDENT_VIEW: ("volunteer_report",),
-}
-
-
-def _resolve_source(actor: Actor, requested: IncidentSource | None) -> IncidentSource:
-    """Decide the provenance from the caller, not from the body."""
-    for permission, allowed in _ALLOWED_SOURCES.items():
-        if actor.can(permission):
-            if requested in allowed:
-                return requested
-            return allowed[0]
-    # A pilgrim filing a report by hand. Deliberately not `pilgrim_sos` — see
-    # the note on `IncidentSource`.
-    return "pilgrim_report"
-
-
-def _guard_update(actor: Actor, incident: Incident, payload: IncidentUpdate) -> None:
-    """Enforce the low/any split on one incident.
-
-    Re-grading is an `update_any` act regardless of the severity it starts from.
-    Without that, a volunteer could downgrade a critical to low and then close
-    it through the door this function is supposed to be guarding.
-    """
-    if actor.can(Permission.INCIDENT_UPDATE_ANY):
-        return
-
-    if payload.severity is not None:
-        raise AppError(
-            "FORBIDDEN",
-            details={
-                "reason": "re-grading severity needs incident:update_any",
-                "missing_permissions": [str(Permission.INCIDENT_UPDATE_ANY)],
-            },
-        )
-
-    if incident.severity not in LOW_SEVERITIES:
-        raise AppError(
-            "FORBIDDEN",
-            details={
-                "reason": f"this incident is graded {incident.severity}",
-                "severity": incident.severity,
-                "you_may_update": sorted(LOW_SEVERITIES),
-                "missing_permissions": [str(Permission.INCIDENT_UPDATE_ANY)],
-            },
-        )
-
 
 # ---------------------------------------------------------------------------
-# response building
+# shaping
 # ---------------------------------------------------------------------------
-async def _locations(session: AsyncSession, ids: set[uuid.UUID]) -> dict[uuid.UUID, tuple[float, float]]:
-    """Read every point in one query rather than one query per incident."""
+async def _zones_for(session: AsyncSession, incidents: list[Incident]) -> dict[uuid.UUID, Zone]:
+    ids = {i.zone_id for i in incidents if i.zone_id}
     if not ids:
         return {}
-    rows = await session.execute(
-        select(Incident.id, func.ST_X(Incident.location), func.ST_Y(Incident.location)).where(
-            Incident.id.in_(ids), Incident.location.is_not(None)
+    rows = await session.execute(select(Zone).where(Zone.id.in_(ids)))
+    return {z.id: z for z in rows.scalars()}
+
+
+async def _call_signs(session: AsyncSession, incidents: list[Incident]) -> dict[uuid.UUID, str]:
+    ids = {i.assigned_responder_id for i in incidents if i.assigned_responder_id}
+    if not ids:
+        return {}
+    rows = await session.execute(select(Responder.id, Responder.call_sign).where(Responder.id.in_(ids)))
+    return dict(rows.all())  # type: ignore[arg-type]
+
+
+async def _point_of(session: AsyncSession, incident: Incident) -> tuple[float, float] | None:
+    if incident.location is None:
+        return None
+    row = (
+        await session.execute(
+            select(func.ST_X(Incident.location), func.ST_Y(Incident.location)).where(Incident.id == incident.id)
         )
-    )
-    return {row[0]: (float(row[1]), float(row[2])) for row in rows if row[1] is not None}
+    ).first()
+    if row and row[0] is not None:
+        return float(row[0]), float(row[1])
+    return None
 
 
-def _one(
+def _out(
     incident: Incident,
     *,
-    zone: Zone | None,
-    responder: Responder | None,
-    location: tuple[float, float] | None,
+    zone: Zone | None = None,
+    call_sign: str | None = None,
+    location: tuple[float, float] | None = None,
     timeline: list[IncidentEventOut] | None = None,
-    at: datetime,
+    at: datetime | None = None,
 ) -> IncidentOut:
-    end = incident.closed_at or incident.resolved_at or at
+    moment = at or now_utc()
+    end = incident.closed_at or incident.resolved_at or moment
     started_at = incident.client_reported_at or incident.created_at
+
     return IncidentOut(
         id=incident.id,
         reference=incident.reference,
-        type=incident.type,
-        severity=incident.severity,
-        status=incident.status,
+        type=IncidentType(incident.type),
+        severity=IncidentSeverity(incident.severity),
+        status=IncidentStatus(incident.status),
         source=incident.source,
         zone_id=incident.zone_id,
         zone_code=zone.code if zone else None,
         zone_name_mr=zone.name_mr if zone else None,
         location=location,
         description=incident.description,
-        has_audio_note=incident.audio_note_uri is not None,
+        # Whether a voice note exists, never where it is. The URI is a signed
+        # object-store path and is not a display field.
+        has_audio_note=bool(incident.audio_note_uri),
         sla_due_at=incident.sla_due_at,
         sla_breached=incident.sla_breached,
-        # Negative once the clock has run out, so a console can render "2m left"
-        # and "4m over" from the same field without a second flag.
-        seconds_to_sla=round((incident.sla_due_at - at).total_seconds(), 1),
+        # Negative once the clock has run out — the console shows "2m over"
+        # rather than clamping to zero and hiding how far past due it is.
+        seconds_to_sla=round((incident.sla_due_at - moment).total_seconds(), 1),
         first_response_at=incident.first_response_at,
         assigned_responder_id=incident.assigned_responder_id,
-        assigned_call_sign=responder.call_sign if responder else None,
+        assigned_call_sign=call_sign,
         client_reported_at=incident.client_reported_at,
         delayed_by_seconds=(
-            round((incident.created_at - incident.client_reported_at).total_seconds(), 1)
+            round((incident.created_at - started_at).total_seconds(), 1)
             if incident.client_reported_at
             else None
         ),
@@ -193,117 +139,54 @@ def _one(
         closed_at=incident.closed_at,
         outcome_note=incident.outcome_note,
         created_at=incident.created_at,
-        # Measured from the report, not from its arrival: an SOS queued offline
-        # for twenty minutes has been open for twenty minutes.
-        seconds_open=round((end - started_at).total_seconds(), 1),
+        seconds_open=round((end - incident.created_at).total_seconds(), 1),
         timeline=timeline or [],
     )
 
 
-async def _decorate(
-    session: AsyncSession,
-    incidents: list[Incident],
-    *,
-    at: datetime | None = None,
-) -> list[IncidentOut]:
-    """Batch the zone, responder and geometry reads for a list view."""
-    moment = at or now_utc()
-    if not incidents:
-        return []
+def _resolve_source(actor: Actor, requested: str) -> str:
+    """Derive provenance from who is calling, not from what they claim.
 
-    zone_ids = {i.zone_id for i in incidents if i.zone_id}
-    zones: dict[uuid.UUID, Zone] = {}
-    if zone_ids:
-        zones = {z.id: z for z in (await session.execute(select(Zone).where(Zone.id.in_(zone_ids)))).scalars()}
-
-    responder_ids = {i.assigned_responder_id for i in incidents if i.assigned_responder_id}
-    responders: dict[uuid.UUID, Responder] = {}
-    if responder_ids:
-        responders = {
-            r.id: r
-            for r in (await session.execute(select(Responder).where(Responder.id.in_(responder_ids)))).scalars()
-        }
-
-    points = await _locations(session, {i.id for i in incidents})
-
-    return [
-        _one(
-            incident,
-            zone=zones.get(incident.zone_id) if incident.zone_id else None,
-            responder=responders.get(incident.assigned_responder_id)
-            if incident.assigned_responder_id
-            else None,
-            location=points.get(incident.id),
-            at=moment,
-        )
-        for incident in incidents
-    ]
-
-
-async def _single(session: AsyncSession, incident: Incident, *, at: datetime | None = None) -> IncidentOut:
-    moment = at or now_utc()
-    rows = await incident_service.timeline(session, incident.id)
-    out = (await _decorate(session, [incident], at=moment))[0]
-    return out.model_copy(
-        update={"timeline": [IncidentEventOut.model_validate(row) for row in rows]}
-    )
+    A control-room operator logging a phone call may say so; a pilgrim may not
+    describe their own report as coming from the control room. The narrowing
+    here is the whole reason `source` can be trusted afterwards.
+    """
+    if actor.role == Role.PILGRIM:
+        return "pilgrim_report"
+    if actor.role == Role.VOLUNTEER and requested not in ("volunteer_report", "phone_call"):
+        return "volunteer_report"
+    if requested == "pilgrim_sos":
+        # Only POST /sos may produce this source. Nothing else, from any role.
+        return "control_room"
+    return requested
 
 
 # ---------------------------------------------------------------------------
 # SOS
 # ---------------------------------------------------------------------------
-_SOS_ASSIGNED = (
-    "Help has been told where you are. {call_sign} is on the way. "
-    "Stay where you are if it is safe to do so."
-)
-_SOS_ASSIGNED_MR = (
-    "तुम्ही कुठे आहात हे मदत पथकाला कळवले आहे. {call_sign} येत आहे. "
-    "सुरक्षित असल्यास तिथेच थांबा."
-)
-_SOS_RECEIVED = (
-    "Help has been told. The control room has your location and is choosing a "
-    "unit now. No unit has been assigned yet."
-)
-_SOS_RECEIVED_MR = (
-    "मदत पथकाला कळवले आहे. नियंत्रण कक्षाकडे तुमचे ठिकाण आले आहे आणि ते पथक "
-    "निवडत आहेत. अद्याप कोणतेही पथक नेमलेले नाही."
-)
-_SOS_REPEAT = "We already have your call ({reference}). It has not been forgotten."
-_SOS_REPEAT_MR = "तुमची नोंद ({reference}) आमच्याकडे आधीच आली आहे. ती विसरलेली नाही."
-
-
 @router.post("/sos", response_model=SosAck, status_code=201)
 async def raise_sos(
     payload: SosCreate,
     actor: Actor = Depends(require(Permission.SOS_RAISE)),
     session: AsyncSession = Depends(get_session),
 ) -> SosAck:
-    """The panic button. This route does not have a failure mode the caller sees.
+    """The panic button.
 
-    Everything that could reasonably be rejected is instead absorbed: an unknown
-    `zone_id` from a client working off a stale offline bundle is dropped and
-    noted rather than raising `ZONE_NOT_FOUND`, and a fourth press inside the
-    rate-limit window attaches to the caller's own open incident instead of
-    returning 429. Section 9 sets the limit and then says never hard-block an
-    SOS; those only look contradictory until you notice the limit exists to stop
-    the control room drowning in duplicates, not to stop a frightened person
-    getting help.
+    This route has no failure mode for "too many requests". Pressing four times
+    in ten minutes attaches to the caller's existing open SOS and records the
+    repeat; the phone still gets a reference number back. Section 9 permits a
+    rate limit here and then forbids hard-blocking, and the only way to honour
+    both is to make the limit change *what happens*, not *whether it happens*.
+
+    Severity is always critical on intake. A frightened person is not triaging
+    themselves, and an operator can re-grade in one call once they know more.
     """
-    moment = now_utc()
-
-    # A zone the client believes in but the server does not: keep the SOS, drop
-    # the claim. The GPS point, if there is one, is the better fact anyway.
-    zone_id = payload.zone_id
-    dropped_zone: str | None = None
-    if zone_id is not None and await session.get(Zone, zone_id) is None:
-        dropped_zone, zone_id = str(zone_id), None
-
     result = await incident_service.raise_sos(
         session,
         phone_hash=actor.user.phone_hash,
         reported_by=actor.id,
         incident_type=payload.type,
-        zone_id=zone_id,
+        zone_id=payload.zone_id,
         location=payload.location,
         description=payload.description,
         audio_note_uri=payload.audio_note_uri,
@@ -311,50 +194,32 @@ async def raise_sos(
         actor_role=actor.user.role,
         ip=actor.ip,
         user_agent=actor.user_agent,
-        at=moment,
     )
     incident = result.incident
 
-    if dropped_zone:
-        await incident_service.add_event(
-            session,
-            incident,
-            action="zone_unknown",
-            actor_id=actor.id,
-            note="The reporting device named a zone this server does not have.",
-            meta={"claimed_zone_id": dropped_zone},
-            at=moment,
-        )
-
-    responder = (
-        await session.get(Responder, incident.assigned_responder_id)
-        if incident.assigned_responder_id
-        else None
-    )
+    # If a unit is already assigned — the repeat-press case — the pilgrim gets a
+    # real ETA. Otherwise they get told help has been informed, which is true,
+    # rather than a spinner or a fabricated number.
     eta: float | None = None
-    if responder is not None:
-        point = await incident_service.incident_location(session, incident)
-        unit = await _responder_point(session, responder.id)
-        if point is not None and unit is not None:
-            eta = round(dispatch_service.walk_eta(dispatch_service.haversine_m(unit, point)).total_seconds(), 1)
+    call_sign: str | None = None
+    if incident.assigned_responder_id:
+        responder = await session.get(Responder, incident.assigned_responder_id)
+        if responder is not None:
+            call_sign = responder.call_sign
+            here = await incident_service.incident_location(session, incident)
+            unit = await _responder_point(session, responder)
+            if here and unit:
+                eta = dispatch_service.walk_eta(dispatch_service.haversine_m(unit, here)).total_seconds()
+
+    message, message_mr = _sos_message(incident.reference, call_sign, eta, result.joined_existing)
 
     await session.commit()
-
     await incident_service.publish(
-        events.INCIDENT_UPDATED if result.joined_existing else events.INCIDENT_RAISED,
+        events.INCIDENT_RAISED if not result.joined_existing else events.INCIDENT_UPDATED,
         incident,
         session=session,
-        extra={"press_count": result.press_count, "joined_existing": result.joined_existing},
+        extra={"press_count": result.press_count, "repeat": result.joined_existing},
     )
-
-    if responder is not None:
-        message = _SOS_ASSIGNED.format(call_sign=responder.call_sign)
-        message_mr = _SOS_ASSIGNED_MR.format(call_sign=responder.call_sign)
-    elif result.joined_existing:
-        message = _SOS_REPEAT.format(reference=incident.reference)
-        message_mr = _SOS_REPEAT_MR.format(reference=incident.reference)
-    else:
-        message, message_mr = _SOS_RECEIVED, _SOS_RECEIVED_MR
 
     return SosAck(
         incident_id=incident.id,
@@ -362,60 +227,62 @@ async def raise_sos(
         status=IncidentStatus(incident.status),
         message=message,
         message_mr=message_mr,
-        responder_eta_seconds=eta,
-        responder_call_sign=responder.call_sign if responder else None,
+        responder_eta_seconds=round(eta, 1) if eta is not None else None,
+        responder_call_sign=call_sign,
         joined_existing=result.joined_existing,
-        received_at=moment,
+        received_at=now_utc(),
     )
 
 
-@router.get("/sos/{reference}", response_model=SosAck)
-async def read_own_sos(
-    reference: str,
-    actor: Actor = Depends(require(Permission.SOS_RAISE)),
-    session: AsyncSession = Depends(get_session),
-) -> SosAck:
-    """What happened to my SOS.
+def _sos_message(
+    ref: str, call_sign: str | None, eta_seconds: float | None, joined: bool
+) -> tuple[str, str]:
+    """What the pilgrim reads. Marathi is the operational text.
 
-    The pilgrim app polls this after the confirmation screen. It matches on the
-    caller's own phone hash, so a valid reference belonging to somebody else
-    answers exactly as a reference that does not exist does — the 404 must not
-    become a way to confirm that a given code is real.
+    Every branch says something concrete. "Help has been informed" is a fact;
+    an empty ETA field is not, and Section 4/M4 is explicit that the pilgrim is
+    never left staring at a spinner.
     """
-    incident = await incident_service.load_by_reference(session, reference)
-    if incident.reporter_phone_hash != actor.user.phone_hash:
-        raise AppError("INCIDENT_NOT_FOUND", details={"reference": reference})
-
-    responder = (
-        await session.get(Responder, incident.assigned_responder_id)
-        if incident.assigned_responder_id
-        else None
+    if eta_seconds is not None and call_sign:
+        minutes = max(1, round(eta_seconds / 60))
+        return (
+            f"Help is on the way. Reference {ref}. Unit {call_sign} is about {minutes} minutes away. "
+            f"Stay where you are if it is safe to do so.",
+            f"मदत येत आहे. संदर्भ क्रमांक {ref}. पथक {call_sign} अंदाजे {minutes} मिनिटांत पोहोचेल. "
+            f"सुरक्षित असल्यास आहात तिथेच थांबा.",
+        )
+    if joined:
+        return (
+            f"We already have your call, reference {ref}. The control room has been told again. "
+            f"Stay where you are if it is safe to do so.",
+            f"तुमची नोंद आमच्याकडे आहे, संदर्भ क्रमांक {ref}. नियंत्रण कक्षाला पुन्हा कळवले आहे. "
+            f"सुरक्षित असल्यास आहात तिथेच थांबा.",
+        )
+    return (
+        f"Your call has been received. Reference {ref}. The control room has been told and is assigning "
+        f"a team. Stay where you are if it is safe to do so.",
+        f"तुमची मदतीची विनंती मिळाली आहे. संदर्भ क्रमांक {ref}. नियंत्रण कक्षाला कळवले असून पथक "
+        f"पाठवण्याची व्यवस्था होत आहे. सुरक्षित असल्यास आहात तिथेच थांबा.",
     )
-    eta: float | None = None
-    if responder is not None:
-        point = await incident_service.incident_location(session, incident)
-        unit = await _responder_point(session, responder.id)
-        if point is not None and unit is not None:
-            eta = round(dispatch_service.walk_eta(dispatch_service.haversine_m(unit, point)).total_seconds(), 1)
-        message = _SOS_ASSIGNED.format(call_sign=responder.call_sign)
-        message_mr = _SOS_ASSIGNED_MR.format(call_sign=responder.call_sign)
-    else:
-        message, message_mr = _SOS_RECEIVED, _SOS_RECEIVED_MR
 
-    return SosAck(
-        incident_id=incident.id,
-        reference=incident.reference,
-        status=IncidentStatus(incident.status),
-        message=message,
-        message_mr=message_mr,
-        responder_eta_seconds=eta,
-        responder_call_sign=responder.call_sign if responder else None,
-        received_at=incident.created_at,
-    )
+
+async def _responder_point(session: AsyncSession, responder: Responder) -> tuple[float, float] | None:
+    if responder.current_location is None:
+        return None
+    row = (
+        await session.execute(
+            select(func.ST_X(Responder.current_location), func.ST_Y(Responder.current_location)).where(
+                Responder.id == responder.id
+            )
+        )
+    ).first()
+    if row and row[0] is not None:
+        return float(row[0]), float(row[1])
+    return None
 
 
 # ---------------------------------------------------------------------------
-# incidents
+# reporting and reading
 # ---------------------------------------------------------------------------
 @router.post("/incidents", response_model=IncidentOut, status_code=201)
 async def create_incident(
@@ -423,7 +290,11 @@ async def create_incident(
     actor: Actor = Depends(require(Permission.INCIDENT_REPORT)),
     session: AsyncSession = Depends(get_session),
 ) -> IncidentOut:
-    """Control-room entry, volunteer report, or a phone call somebody took."""
+    """Control-room entry, a volunteer's report, or a logged phone call."""
+    contact_hash: str | None = None
+    if payload.contact_phone:
+        contact_hash = await incident_service.store_contact(session, payload.contact_phone, at=now_utc())
+
     incident = await incident_service.create(
         session,
         incident_type=payload.type,
@@ -433,16 +304,14 @@ async def create_incident(
         location=payload.location,
         description=payload.description,
         reported_by=actor.id,
-        reporter_phone_hash=(
-            await incident_service.store_contact(session, payload.contact_phone, at=now_utc())
-            if payload.contact_phone
-            else None
-        ),
+        reporter_phone_hash=contact_hash or actor.user.phone_hash,
         actor_role=actor.user.role,
         ip=actor.ip,
         user_agent=actor.user_agent,
     )
-    out = await _single(session, incident)
+
+    zone = await session.get(Zone, incident.zone_id) if incident.zone_id else None
+    out = _out(incident, zone=zone, location=payload.location)
     await session.commit()
     await incident_service.publish(events.INCIDENT_RAISED, incident, session=session)
     return out
@@ -456,22 +325,23 @@ async def list_incidents(
     severity: str | None = None,
     incident_type: str | None = Query(default=None, alias="type"),
     zone_id: uuid.UUID | None = None,
-    open_only: bool = Query(default=True, description="Only incidents still needing somebody"),
-    sla_breached: bool | None = Query(default=None),
+    open_only: bool = Query(default=True, description="Only incidents still needing attention"),
+    sla_breached: bool | None = None,
     since_hours: int = Query(default=24, ge=1, le=720),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     _: Actor = Depends(require(Permission.INCIDENT_VIEW)),
     session: AsyncSession = Depends(get_session),
 ) -> Page[IncidentOut]:
-    """The board. Worst first, then whichever has least SLA left.
+    """The incident board.
 
-    Ordering by remaining SLA rather than by age within a severity is the whole
-    point of the sort: two critical incidents four minutes apart are not equally
-    urgent if one of them was re-graded up from normal and is already overdue.
+    Ordered by SLA urgency, not by recency: whatever is closest to breaching (or
+    furthest past it) comes first. An operator working down this list is working
+    down the list of people who have been waiting longest relative to how bad
+    their situation is, which is the only ordering that makes sense when both
+    columns are moving.
     """
-    moment = now_utc()
-    stmt = select(Incident).where(Incident.created_at >= moment - timedelta(hours=since_hours))
+    stmt = select(Incident).where(Incident.created_at >= now_utc() - timedelta(hours=since_hours))
     if status:
         stmt = stmt.where(Incident.status == status)
     elif open_only:
@@ -485,14 +355,26 @@ async def list_incidents(
     if sla_breached is not None:
         stmt = stmt.where(Incident.sla_breached.is_(sla_breached))
 
-    rank = case({"critical": 0, "high": 1, "normal": 2, "low": 3}, value=Incident.severity, else_=4)
     total = await session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = await session.execute(
-        stmt.order_by(rank, Incident.sla_due_at.asc()).limit(limit).offset(offset)
+        stmt.order_by(Incident.sla_breached.desc(), Incident.sla_due_at.asc()).limit(limit).offset(offset)
     )
+    incidents = list(rows.scalars())
+
+    zones = await _zones_for(session, incidents)
+    signs = await _call_signs(session, incidents)
+    moment = now_utc()
 
     return Page[IncidentOut](
-        items=await _decorate(session, list(rows.scalars()), at=moment),
+        items=[
+            _out(
+                i,
+                zone=zones.get(i.zone_id) if i.zone_id else None,
+                call_sign=signs.get(i.assigned_responder_id) if i.assigned_responder_id else None,
+                at=moment,
+            )
+            for i in incidents
+        ],
         total=total,
         limit=limit,
         offset=offset,
@@ -502,11 +384,48 @@ async def list_incidents(
 @router.get("/incidents/{incident_id}", response_model=IncidentOut)
 async def get_incident(
     incident_id: uuid.UUID,
-    _: Actor = Depends(require(Permission.INCIDENT_VIEW)),
+    actor: Actor = Depends(require(Permission.INCIDENT_REPORT)),
     session: AsyncSession = Depends(get_session),
 ) -> IncidentOut:
-    """One incident, with the timeline that is the actual record of it."""
-    return await _single(session, await incident_service.load(session, incident_id))
+    """One incident with its full timeline.
+
+    Gated on `incident:report` rather than `incident:view` so a pilgrim can read
+    back the SOS they raised — and then narrowed below to *only* that one. They
+    are entitled to know what happened to their own emergency and to nothing
+    else, and the timeline is where "what happened" actually lives.
+    """
+    incident = await incident_service.load(session, incident_id)
+
+    if not actor.can(Permission.INCIDENT_VIEW) and incident.reported_by != actor.id:
+        # 404 rather than 403: confirming an incident exists to somebody who may
+        # not see it is itself a disclosure.
+        raise AppError("INCIDENT_NOT_FOUND", details={"incident_id": str(incident_id)})
+
+    zone = await session.get(Zone, incident.zone_id) if incident.zone_id else None
+    responder = (
+        await session.get(Responder, incident.assigned_responder_id)
+        if incident.assigned_responder_id
+        else None
+    )
+    rows = await incident_service.timeline(session, incident.id)
+
+    return _out(
+        incident,
+        zone=zone,
+        call_sign=responder.call_sign if responder else None,
+        location=await _point_of(session, incident),
+        timeline=[
+            IncidentEventOut(
+                id=e.id,
+                action=e.action,
+                note=e.note,
+                actor_id=e.actor_id,
+                meta=e.meta,
+                created_at=e.created_at,
+            )
+            for e in rows
+        ],
+    )
 
 
 @router.patch("/incidents/{incident_id}", response_model=IncidentOut)
@@ -516,22 +435,29 @@ async def update_incident(
     actor: Actor = Depends(require(Permission.INCIDENT_UPDATE_LOW)),
     session: AsyncSession = Depends(get_session),
 ) -> IncidentOut:
-    """Move an incident along, re-grade it, or both.
+    """Move an incident along, or re-grade it.
 
-    The route asks for the *lower* of the two permissions and then narrows in
-    `_guard_update`, because what a caller may do here depends on the incident
-    in front of them and not only on their role — and a dependency cannot see
-    the row.
-
-    Re-grading happens before the status change when both are sent. The order
-    matters: `regrade` recomputes the SLA from the original report time, so
-    doing it second would stamp a fresh clock onto an incident that had just
-    been resolved.
+    A volunteer holds `incident:update_low` and may work low-severity incidents
+    only; anything above that needs `incident:update_any`. The check is here
+    rather than in the permission matrix because it depends on the *row*, and a
+    permission cannot see a row.
     """
     incident = await incident_service.load(session, incident_id)
-    _guard_update(actor, incident, payload)
+
+    if IncidentSeverity(incident.severity) != IncidentSeverity.LOW and not actor.can(
+        Permission.INCIDENT_UPDATE_ANY
+    ):
+        raise AppError(
+            "FORBIDDEN",
+            details={
+                "reason": "this incident's severity is above what your role may update",
+                "severity": incident.severity,
+            },
+        )
 
     if payload.severity is not None:
+        if not actor.can(Permission.INCIDENT_UPDATE_ANY):
+            raise AppError("FORBIDDEN", details={"reason": "re-grading needs incident:update_any"})
         await incident_service.regrade(
             session,
             incident,
@@ -555,58 +481,41 @@ async def update_incident(
             ip=actor.ip,
             user_agent=actor.user_agent,
         )
-    elif payload.outcome_note:
-        # An outcome note on its own is a correction to the record, not a
-        # transition. Allowed, and written to the timeline like everything else.
-        incident.outcome_note = payload.outcome_note
+    elif payload.note and payload.severity is None:
         await incident_service.add_event(
-            session,
-            incident,
-            action="outcome_noted",
-            actor_id=actor.id,
-            note=payload.outcome_note,
+            session, incident, action="note", actor_id=actor.id, note=payload.note
         )
 
-    out = await _single(session, incident)
+    zone = await session.get(Zone, incident.zone_id) if incident.zone_id else None
+    responder = (
+        await session.get(Responder, incident.assigned_responder_id)
+        if incident.assigned_responder_id
+        else None
+    )
+    out = _out(incident, zone=zone, call_sign=responder.call_sign if responder else None)
     await session.commit()
     await incident_service.publish(events.INCIDENT_UPDATED, incident, session=session)
     return out
 
 
-@router.post("/admin/incidents/sla-sweep", response_model=dict)
-async def sweep_sla_now(
-    actor: Actor = Depends(require(Permission.INCIDENT_DISPATCH)),
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, object]:
-    """Run the SLA sweep now instead of waiting for the timer.
-
-    Mirrors `/admin/reslot/run`: the scheduler owns the job, and this exists so
-    the behaviour can be demonstrated and tested without a fifteen-second wait.
-    It marks nothing the timer would not have marked a moment later.
-    """
-    moment = now_utc()
-    breaches = await incident_service.sweep_sla(session, at=moment)
-    await session.commit()
-
-    for breach in breaches:
-        await incident_service.publish(
-            events.INCIDENT_SLA_BREACHED,
-            breach.incident,
-            session=session,
-            extra={"overdue_seconds": round(breach.overdue_seconds, 1)},
-        )
-
-    return {
-        "breached": len(breaches),
-        "references": [b.incident.reference for b in breaches],
-        "ran_at": moment.isoformat(),
-        "ran_by": str(actor.id),
-    }
-
-
 # ---------------------------------------------------------------------------
 # dispatch
 # ---------------------------------------------------------------------------
+_DISPATCH_NOTE = (
+    "Suggestions are ranked by unit type first, then straight-line distance. "
+    "ETAs assume 0.7 m/s on foot through a crowd and are a floor, not a forecast — "
+    "the real route is longer and may be blocked. A human confirms every dispatch."
+)
+_DISPATCH_NOTE_MR = (
+    "पथकांची क्रमवारी आधी प्रकारानुसार, नंतर सरळ रेषेतील अंतरानुसार आहे. "
+    # Latin digits in the Marathi string, matching every other measurement the
+    # API returns. Devanagari numerals read naturally in prose but this figure
+    # is quoted back in logs and radio traffic alongside the English one.
+    "पोहोचण्याची वेळ गर्दीतून 0.7 मी/सेकंद या वेगाने काढलेली किमान वेळ आहे — प्रत्यक्ष मार्ग "
+    "यापेक्षा लांब असू शकतो. प्रत्येक पथक माणूसच पाठवतो."
+)
+
+
 @router.get("/incidents/{incident_id}/dispatch-options", response_model=DispatchOptions)
 async def dispatch_options(
     incident_id: uuid.UUID,
@@ -614,84 +523,60 @@ async def dispatch_options(
     _: Actor = Depends(require(Permission.INCIDENT_DISPATCH)),
     session: AsyncSession = Depends(get_session),
 ) -> DispatchOptions:
-    """Ranked units for an operator to choose from. It suggests; it does not send.
+    """Rank the units an operator might send. Suggest only — never dispatch.
 
     `available_units` is returned alongside the list so an empty `suggestions`
-    is never read as "no units exist". Those are different situations — every
-    unit busy, versus every unit more than two kilometres away — and an operator
-    reaching for the radio needs to know which one they are in.
+    is never read as "no units exist". Nothing within 2 km and nothing on the
+    board are different problems.
     """
-    moment = now_utc()
     incident = await incident_service.load(session, incident_id)
-    point = await incident_service.incident_location(session, incident)
-    units = await incident_service.candidates(session, at=moment)
+    units = await incident_service.candidates(session)
+    here = await incident_service.incident_location(session, incident)
 
-    suggestions = dispatch_service.suggest(
+    ranked = dispatch_service.suggest(
         units,
-        incident_type=incident.type,
-        incident_location=point,
+        incident_type=IncidentType(incident.type),
+        incident_location=here,
         limit=limit,
     )
-    available = sum(1 for unit in units if unit.status == "available")
-
-    if not suggestions and available == 0:
-        note = (
-            "No unit is available. Every unit on the roster is already assigned "
-            "or off duty — dispatch by radio and log it here afterwards."
-        )
-        note_mr = (
-            "कोणतेही पथक उपलब्ध नाही. यादीतील सर्व पथके आधीच नेमलेली किंवा "
-            "ड्युटीवर नाहीत — रेडिओवरून पाठवा आणि नंतर येथे नोंद करा."
-        )
-    elif not suggestions:
-        note = (
-            f"{available} unit(s) are free but none is within "
-            f"{int(dispatch_service.MAX_SUGGEST_DISTANCE_M)} m of this incident."
-        )
-        note_mr = (
-            f"{available} पथके मोकळी आहेत, पण या घटनेपासून "
-            f"{int(dispatch_service.MAX_SUGGEST_DISTANCE_M)} मीटरच्या आत एकही नाही."
-        )
-    elif point is None:
-        note = (
-            "This incident has no location, so these units are ranked by type "
-            "only. The distances are unknown, not zero."
-        )
-        note_mr = (
-            "या घटनेचे ठिकाण नोंदलेले नाही, त्यामुळे ही पथके फक्त प्रकारानुसार "
-            "क्रमाने आहेत. अंतर माहीत नाही — शून्य नाही."
-        )
-    else:
-        note = (
-            "Walking estimates through a crowd at "
-            f"{dispatch_service.CROWD_WALK_SPEED_MS} m/s, in a straight line. "
-            "The real route is longer and may be blocked."
-        )
-        note_mr = (
-            f"गर्दीतून {dispatch_service.CROWD_WALK_SPEED_MS} मी/सेकंद या वेगाने, "
-            "सरळ रेषेत काढलेला अंदाज. प्रत्यक्ष मार्ग यापेक्षा लांब असतो आणि बंदही असू शकतो."
-        )
 
     return DispatchOptions(
         incident_id=incident.id,
-        suggestions=[SuggestionOut(**asdict(s)) for s in suggestions],
-        available_units=available,
-        note=note,
-        note_mr=note_mr,
-        generated_at=moment,
+        suggestions=[
+            SuggestionOut(
+                responder_id=s.responder_id,
+                call_sign=s.call_sign,
+                unit_type=s.unit_type,
+                distance_m=s.distance_m,
+                eta_seconds=s.eta_seconds,
+                type_rank=s.type_rank,
+                caveats=s.caveats,
+            )
+            for s in ranked
+        ],
+        available_units=sum(1 for u in units if u.status == "available"),
+        note=_DISPATCH_NOTE,
+        note_mr=_DISPATCH_NOTE_MR,
+        generated_at=now_utc(),
     )
 
 
 @router.post("/incidents/{incident_id}/dispatch", response_model=IncidentOut)
-async def dispatch_unit(
+async def dispatch_incident(
     incident_id: uuid.UUID,
     payload: DispatchRequest,
     actor: Actor = Depends(require(Permission.INCIDENT_DISPATCH)),
     session: AsyncSession = Depends(get_session),
 ) -> IncidentOut:
-    """Send a named unit. A human picked it; the audit log records who."""
+    """Send the unit the operator chose.
+
+    The responder id comes from the request body, which means it came from a
+    person. There is no endpoint anywhere in this service that picks one on its
+    own — Section 4/M4's "no auto-dispatch" is enforced by there being no code
+    that could.
+    """
     incident = await incident_service.load(session, incident_id)
-    _, responder = await incident_service.dispatch(
+    incident, responder = await incident_service.dispatch(
         session,
         incident,
         responder_id=payload.responder_id,
@@ -702,14 +587,15 @@ async def dispatch_unit(
         ip=actor.ip,
         user_agent=actor.user_agent,
     )
-    out = await _single(session, incident)
-    await session.commit()
 
+    zone = await session.get(Zone, incident.zone_id) if incident.zone_id else None
+    out = _out(incident, zone=zone, call_sign=responder.call_sign)
+    await session.commit()
     await incident_service.publish(
-        events.INCIDENT_DISPATCHED,
+        events.INCIDENT_UPDATED,
         incident,
         session=session,
-        extra={"call_sign": responder.call_sign, "unit_type": responder.unit_type},
+        extra={"assigned_call_sign": responder.call_sign, "unit_type": responder.unit_type},
     )
     return out
 
@@ -717,76 +603,57 @@ async def dispatch_unit(
 # ---------------------------------------------------------------------------
 # responders
 # ---------------------------------------------------------------------------
-async def _responder_point(session: AsyncSession, responder_id: uuid.UUID) -> tuple[float, float] | None:
-    row = (
-        await session.execute(
-            select(func.ST_X(Responder.current_location), func.ST_Y(Responder.current_location)).where(
-                Responder.id == responder_id
-            )
-        )
-    ).first()
-    if row and row[0] is not None:
-        return float(row[0]), float(row[1])
-    return None
-
-
 @router.get("/responders", response_model=list[ResponderOut])
 async def list_responders(
     unit_type: str | None = None,
-    status: str | None = Query(default=None, description="available | assigned | on_scene | off_duty"),
+    status: str | None = None,
     _: Actor = Depends(require(Permission.INCIDENT_VIEW)),
     session: AsyncSession = Depends(get_session),
 ) -> list[ResponderOut]:
-    """The roster, with how old each position is.
-
-    `seconds_since_ping` is on every row rather than only on the stale ones,
-    because a board that flags staleness only past a threshold teaches an
-    operator that an unflagged dot is current — and the threshold is a
-    judgement, not a fact about that unit.
-    """
-    moment = now_utc()
+    """The roster, with each unit's last known position and current assignment."""
     stmt = select(
-        Responder,
+        Responder.id,
+        Responder.call_sign,
+        Responder.unit_type,
+        Responder.status,
         func.ST_X(Responder.current_location),
         func.ST_Y(Responder.current_location),
-    )
+        Responder.last_ping_at,
+    ).order_by(Responder.unit_type, Responder.call_sign)
     if unit_type:
         stmt = stmt.where(Responder.unit_type == unit_type)
     if status:
         stmt = stmt.where(Responder.status == status)
-    rows = list(await session.execute(stmt.order_by(Responder.unit_type, Responder.call_sign)))
 
-    assignments: dict[uuid.UUID, Incident] = {}
-    unit_ids = {r[0].id for r in rows}
-    if unit_ids:
+    rows = list(await session.execute(stmt))
+    ids = [r[0] for r in rows]
+
+    assignments: dict[uuid.UUID, tuple[uuid.UUID, str]] = {}
+    if ids:
         open_rows = await session.execute(
-            select(Incident).where(
-                Incident.assigned_responder_id.in_(unit_ids),
+            select(Incident.assigned_responder_id, Incident.id, Incident.reference).where(
+                Incident.assigned_responder_id.in_(ids),
                 Incident.status.in_([str(s) for s in incident_service.OPEN_STATUSES]),
             )
         )
-        for incident in open_rows.scalars():
-            if incident.assigned_responder_id is not None:
-                assignments[incident.assigned_responder_id] = incident
+        for responder_id, incident_id, ref in open_rows:
+            assignments[responder_id] = (incident_id, ref)
 
+    moment = now_utc()
     out: list[ResponderOut] = []
-    for responder, lon, lat in rows:
-        incident = assignments.get(responder.id)
+    for rid, call_sign, utype, status_value, lon, lat, last_ping in rows:
+        assignment = assignments.get(rid)
         out.append(
             ResponderOut(
-                id=responder.id,
-                call_sign=responder.call_sign,
-                unit_type=responder.unit_type,
-                status=responder.status,
+                id=rid,
+                call_sign=call_sign,
+                unit_type=utype,
+                status=status_value,
                 location=(float(lon), float(lat)) if lon is not None else None,
-                last_ping_at=responder.last_ping_at,
-                seconds_since_ping=(
-                    round((moment - responder.last_ping_at).total_seconds(), 1)
-                    if responder.last_ping_at
-                    else None
-                ),
-                assigned_incident_id=incident.id if incident else None,
-                assigned_incident_reference=incident.reference if incident else None,
+                last_ping_at=last_ping,
+                seconds_since_ping=round((moment - last_ping).total_seconds(), 1) if last_ping else None,
+                assigned_incident_id=assignment[0] if assignment else None,
+                assigned_incident_reference=assignment[1] if assignment else None,
             )
         )
     return out
@@ -801,55 +668,34 @@ async def ping_responder(
 ) -> ResponderOut:
     """A unit reporting where it is.
 
-    A responder may only move their own unit. The control room — anyone holding
-    `incident:dispatch` — may correct any unit's position, because a radio call
-    saying "we are at gate 3" has to be able to reach the board when the phone
-    in the responder's pocket is dead. That is the case the override exists for,
-    and it is the reason the board is trustworthy at all.
+    Position is coarse by nature — a phone GPS in a crowd — and it is stored
+    against the *unit*, not against a person. A responder is on duty and their
+    location is operational; that is a different thing from tracking a pilgrim,
+    which this system does not do (Section 12).
     """
     responder = await session.get(Responder, responder_id)
     if responder is None:
         raise AppError("RESPONDER_NOT_FOUND", details={"responder_id": str(responder_id)})
 
-    if responder.user_id != actor.id and not actor.can(Permission.INCIDENT_DISPATCH):
-        raise AppError(
-            "FORBIDDEN",
-            details={"reason": "you may only report the position of your own unit"},
-        )
-
-    moment = now_utc()
     lon, lat = payload.location
     if not (-180 <= lon <= 180 and -90 <= lat <= 90):
         raise AppError("BAD_REQUEST", details={"reason": "coordinates out of range"})
 
+    moment = now_utc()
     responder.current_location = f"SRID=4326;POINT({lon} {lat})"
     responder.last_ping_at = moment
     if payload.status is not None:
-        # A unit cannot free itself while it is on an open incident — that
-        # would take it off the board with the incident still assigned to it,
-        # and the next dispatch would double-book a unit already in use.
-        if payload.status == "available" and responder.status in ("assigned", "on_scene"):
-            still_open = await session.scalar(
-                select(func.count())
-                .select_from(Incident)
-                .where(
-                    Incident.assigned_responder_id == responder.id,
-                    Incident.status.in_([str(s) for s in incident_service.OPEN_STATUSES]),
-                )
-            )
-            if still_open:
-                raise AppError(
-                    "CONFLICT",
-                    details={
-                        "reason": "this unit is still assigned to an open incident",
-                        "call_sign": responder.call_sign,
-                    },
-                )
         responder.status = payload.status
 
-    await session.commit()
+    assignment = await session.execute(
+        select(Incident.id, Incident.reference).where(
+            Incident.assigned_responder_id == responder.id,
+            Incident.status.in_([str(s) for s in incident_service.OPEN_STATUSES]),
+        )
+    )
+    row = assignment.first()
 
-    return ResponderOut(
+    out = ResponderOut(
         id=responder.id,
         call_sign=responder.call_sign,
         unit_type=responder.unit_type,
@@ -857,212 +703,8 @@ async def ping_responder(
         location=(lon, lat),
         last_ping_at=moment,
         seconds_since_ping=0.0,
+        assigned_incident_id=row[0] if row else None,
+        assigned_incident_reference=row[1] if row else None,
     )
-
-
-# ---------------------------------------------------------------------------
-# missing persons
-# ---------------------------------------------------------------------------
-def _missing_out(
-    record: MissingPerson,
-    *,
-    incident: Incident | None,
-    zone: Zone | None,
-    at: datetime,
-) -> MissingPersonOut:
-    end = record.resolved_at or at
-    return MissingPersonOut(
-        id=record.id,
-        incident_id=record.incident_id,
-        incident_reference=incident.reference if incident else None,
-        name=record.name,
-        age=record.age,
-        description=record.description,
-        has_photo=record.photo_uri is not None,
-        last_seen_zone_id=record.last_seen_zone_id,
-        last_seen_zone_code=zone.code if zone else None,
-        last_seen_at=record.last_seen_at,
-        language=record.language,
-        status=record.status,
-        reported_at=record.reported_at,
-        resolved_at=record.resolved_at,
-        purge_after=record.purge_after,
-        open_for_seconds=round((end - record.reported_at).total_seconds(), 1),
-    )
-
-
-async def _missing_context(
-    session: AsyncSession, records: list[MissingPerson]
-) -> tuple[dict[uuid.UUID, Incident], dict[uuid.UUID, Zone]]:
-    incident_ids = {r.incident_id for r in records if r.incident_id}
-    incidents: dict[uuid.UUID, Incident] = {}
-    if incident_ids:
-        incidents = {
-            i.id: i
-            for i in (await session.execute(select(Incident).where(Incident.id.in_(incident_ids)))).scalars()
-        }
-    zone_ids = {r.last_seen_zone_id for r in records if r.last_seen_zone_id}
-    zones: dict[uuid.UUID, Zone] = {}
-    if zone_ids:
-        zones = {z.id: z for z in (await session.execute(select(Zone).where(Zone.id.in_(zone_ids)))).scalars()}
-    return incidents, zones
-
-
-@router.post("/missing-persons", response_model=MissingPersonOut, status_code=201)
-async def report_missing_person(
-    payload: MissingPersonCreate,
-    actor: Actor = Depends(require(Permission.INCIDENT_REPORT)),
-    session: AsyncSession = Depends(get_session),
-) -> MissingPersonOut:
-    """Open a case, and the incident that puts it on the same board as everything else.
-
-    Graded `high`, not `critical`: ten minutes rather than three. A missing
-    person needs a search organised properly, and grading every case critical
-    would queue it ahead of the cardiac arrest — the one call this system must
-    never get wrong.
-    """
-    moment = now_utc()
-    record, incident = await incident_service.report_missing_person(
-        session,
-        name=payload.name,
-        contact_phone=payload.contact_phone,
-        age=payload.age,
-        description=payload.description,
-        photo_uri=payload.photo_uri,
-        last_seen_zone_id=payload.last_seen_zone_id,
-        last_seen_at=payload.last_seen_at,
-        language=payload.language,
-        reported_by=actor.id,
-        source=_resolve_source(actor, None),
-        actor_role=actor.user.role,
-        ip=actor.ip,
-        user_agent=actor.user_agent,
-        at=moment,
-    )
-    zone = await session.get(Zone, record.last_seen_zone_id) if record.last_seen_zone_id else None
-    out = _missing_out(record, incident=incident, zone=zone, at=moment)
     await session.commit()
-
-    # Broadcast so the volunteer app in the surrounding zones hears about it —
-    # Section 5/E2. The name and the photo are deliberately not in the payload:
-    # the socket fans out to every connected console, and the details belong to
-    # the people working the case, who fetch them from the case itself.
-    await incident_service.publish(
-        events.INCIDENT_RAISED,
-        incident,
-        session=session,
-        extra={"missing_person_id": str(record.id), "age": record.age},
-    )
-    return out
-
-
-@router.get("/missing-persons", response_model=Page[MissingPersonOut])
-async def list_missing_persons(
-    status: str | None = Query(default=None, description="open | sighted | reunited | closed_unresolved"),
-    open_only: bool = Query(default=True),
-    zone_id: uuid.UUID | None = None,
-    limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-    _: Actor = Depends(require(Permission.INCIDENT_VIEW)),
-    session: AsyncSession = Depends(get_session),
-) -> Page[MissingPersonOut]:
-    """Oldest first — the opposite of every other list in this API.
-
-    A missing person who has been missing for two hours is the one the
-    announcement desk works next, and a newest-first list buries them under
-    every case reported since.
-    """
-    moment = now_utc()
-    stmt = select(MissingPerson)
-    if status:
-        stmt = stmt.where(MissingPerson.status == status)
-    elif open_only:
-        stmt = stmt.where(MissingPerson.status.in_(("open", "sighted")))
-    if zone_id:
-        stmt = stmt.where(MissingPerson.last_seen_zone_id == zone_id)
-
-    total = await session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    rows = await session.execute(
-        stmt.order_by(MissingPerson.reported_at.asc()).limit(limit).offset(offset)
-    )
-    records = list(rows.scalars())
-    incidents, zones = await _missing_context(session, records)
-
-    return Page[MissingPersonOut](
-        items=[
-            _missing_out(
-                record,
-                incident=incidents.get(record.incident_id) if record.incident_id else None,
-                zone=zones.get(record.last_seen_zone_id) if record.last_seen_zone_id else None,
-                at=moment,
-            )
-            for record in records
-        ],
-        total=total,
-        limit=limit,
-        offset=offset,
-    )
-
-
-@router.get("/missing-persons/{case_id}", response_model=MissingPersonOut)
-async def get_missing_person(
-    case_id: uuid.UUID,
-    _: Actor = Depends(require(Permission.INCIDENT_VIEW)),
-    session: AsyncSession = Depends(get_session),
-) -> MissingPersonOut:
-    record = await incident_service.load_missing_person(session, case_id)
-    incident = await session.get(Incident, record.incident_id) if record.incident_id else None
-    zone = await session.get(Zone, record.last_seen_zone_id) if record.last_seen_zone_id else None
-    return _missing_out(record, incident=incident, zone=zone, at=now_utc())
-
-
-@router.patch("/missing-persons/{case_id}", response_model=MissingPersonOut)
-async def update_missing_person(
-    case_id: uuid.UUID,
-    payload: MissingPersonUpdate,
-    actor: Actor = Depends(require(Permission.INCIDENT_UPDATE_LOW)),
-    session: AsyncSession = Depends(get_session),
-) -> MissingPersonOut:
-    """Sighted, reunited, or closed without finding them.
-
-    A volunteer may mark a sighting — that is the whole reason the case is
-    broadcast to them. Ending a case needs `incident:update_any`, because
-    "reunited" closes the incident and stands the search down, and it is a claim
-    somebody has to own.
-    """
-    if payload.status != "sighted" and not actor.can(Permission.INCIDENT_UPDATE_ANY):
-        raise AppError(
-            "FORBIDDEN",
-            details={
-                "reason": "closing a missing-person case needs incident:update_any",
-                "you_may_set": ["sighted"],
-                "missing_permissions": [str(Permission.INCIDENT_UPDATE_ANY)],
-            },
-        )
-
-    record = await incident_service.load_missing_person(session, case_id)
-    await incident_service.update_missing_person(
-        session,
-        record,
-        status=payload.status,
-        actor_id=actor.id,
-        actor_role=actor.user.role,
-        note=payload.note,
-        zone_id=payload.zone_id,
-        ip=actor.ip,
-        user_agent=actor.user_agent,
-    )
-
-    incident = await session.get(Incident, record.incident_id) if record.incident_id else None
-    zone = await session.get(Zone, record.last_seen_zone_id) if record.last_seen_zone_id else None
-    out = _missing_out(record, incident=incident, zone=zone, at=now_utc())
-    await session.commit()
-
-    if incident is not None:
-        await incident_service.publish(
-            events.INCIDENT_UPDATED,
-            incident,
-            session=session,
-            extra={"missing_person_id": str(record.id), "case_status": record.status},
-        )
     return out

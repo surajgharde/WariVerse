@@ -1,6 +1,7 @@
 """The AI engine's ingress (Section 6 boundary).
 
     POST /ingest/density      POST /ingest/heartbeat      GET /ingest/config
+    POST /ingest/breach
 
 This is the *only* way crowd measurements enter the system, and it is why the
 AI service holds no database credentials.  Kill the ai-engine container mid-Wari
@@ -36,6 +37,7 @@ from app.core.errors import AppError
 from app.core.logging import get_logger
 from app.core.security import now_utc
 from app.models import Alert, Camera, Zone
+from app.schemas.breach import CrossingBatch, CrossingResult
 from app.schemas.common import ErrorResponse
 from app.schemas.crowd import (
     DensityIngest,
@@ -45,7 +47,7 @@ from app.schemas.crowd import (
     HeartbeatBatch,
     IngestResult,
 )
-from app.services import alert_service, config_service, crowd_service
+from app.services import alert_service, breach_service, config_service, crowd_service
 from app.services.calibration import Homography
 
 logger = get_logger(__name__)
@@ -288,4 +290,84 @@ async def engine_config(session: AsyncSession = Depends(get_session)) -> EngineC
         stagnation_threshold=await config_service.get_float(session, "stagnation_alert_threshold"),
         counterflow_threshold=await config_service.get_float(session, "counterflow_alert_threshold"),
         generated_at=now_utc(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# breach crossings (Phase 6, Section 4/M5)
+# ---------------------------------------------------------------------------
+@router.post("/breach", response_model=CrossingResult, status_code=202)
+async def ingest_crossings(
+    payload: CrossingBatch,
+    session: AsyncSession = Depends(get_session),
+) -> CrossingResult:
+    """Tripwire crossings from the vision pipeline.
+
+    Most of what arrives here never becomes a record, and that is the design
+    working rather than failing. The engine reports every crossing it sees; this
+    endpoint applies the three filters Section 4/M5 specifies — wrong direction,
+    gate open, a valid pass scanned within ±30 seconds — and only what survives
+    all three is written to the ledger.
+
+    Rejection reasons are counted and returned. "The engine saw 40 crossings and
+    the ledger has 3" is a question somebody will ask during a review, and the
+    37 reasons are the answer. Without this the discrepancy looks like data loss.
+
+    Note what the engine is not permitted to send and has nowhere to put: a
+    track id, a bounding box, an appearance vector. Track ids are ephemeral and
+    in-memory on the engine side (Section 12); they stop existing at this
+    boundary because there is no field for them.
+    """
+    moment = now_utc()
+    recorded = 0
+    reasons: dict[str, int] = {}
+    sequences: list[int] = []
+
+    for entry in payload.crossings:
+        age = moment - entry.occurred_at
+        if age > MAX_BACKDATE or -age > MAX_FUTURE:
+            # Same guard as density, and it matters more here: `occurred_at` is
+            # inside the hash, so an engine with a wrong clock would write a bad
+            # timestamp that the immutability trigger then makes permanent.
+            reasons["timestamp outside the accepted window"] = (
+                reasons.get("timestamp outside the accepted window", 0) + 1
+            )
+            continue
+
+        try:
+            outcome = await breach_service.record_crossing(
+                session,
+                breach_service.Crossing(
+                    tripwire_id=entry.tripwire_id,
+                    occurred_at=entry.occurred_at,
+                    direction=entry.direction,
+                    confidence=entry.confidence,
+                    crossing_count=entry.crossing_count,
+                    clip_uri=entry.clip_uri,
+                    clip_sha256=entry.clip_sha256,
+                ),
+                at=moment,
+            )
+        except AppError as exc:
+            # One unknown tripwire must not discard the rest of the batch.
+            reasons[exc.code] = reasons.get(exc.code, 0) + 1
+            continue
+
+        if outcome.recorded and outcome.event is not None:
+            recorded += 1
+            sequences.append(outcome.event.sequence)
+        else:
+            reasons[outcome.reason] = reasons.get(outcome.reason, 0) + 1
+
+    await session.commit()
+
+    if recorded:
+        logger.info("breach_ingest", extra={"recorded": recorded, "ignored": len(payload.crossings) - recorded})
+
+    return CrossingResult(
+        recorded=recorded,
+        ignored=len(payload.crossings) - recorded,
+        reasons=reasons,
+        sequences=sequences,
+        received_at=moment,
     )

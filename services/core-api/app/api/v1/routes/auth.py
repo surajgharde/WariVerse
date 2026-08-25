@@ -3,7 +3,7 @@
     POST /auth/otp/request   POST /auth/otp/verify
     POST /auth/login         POST /auth/mfa/verify
     POST /auth/refresh       POST /auth/logout
-    GET  /auth/me
+    GET  /auth/me            POST /auth/dev-login   (development only)
 """
 
 from __future__ import annotations
@@ -11,12 +11,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.db import get_session
 from app.core.deps import Actor, client_ip, get_current_actor
 from app.core.errors import AppError
 from app.core.permissions import requires_mfa
-from app.core.security import generate_mfa_secret, mfa_provisioning_uri, now_utc, verify_mfa_code
+from app.core.security import generate_mfa_secret, mfa_provisioning_uri, normalise_phone, now_utc, verify_mfa_code
 from app.schemas.auth import (
+    DevLogin,
     LogoutRequest,
     MfaChallengeResponse,
     MfaEnrolResponse,
@@ -205,3 +207,70 @@ async def logout(
 @router.get("/me", response_model=UserProfile)
 async def me(actor: Actor = Depends(get_current_actor)) -> UserProfile:
     return UserProfile(**auth_service.profile_payload(actor.user))  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# development sign-in
+# ---------------------------------------------------------------------------
+@router.post("/dev-login", response_model=TokenResponse, include_in_schema=False)
+async def dev_login(
+    payload: DevLogin, request: Request, session: AsyncSession = Depends(get_session)
+) -> TokenResponse:
+    """Sign in as a seeded staff account without a password. Development only.
+
+    This exists because the alternative during a demo is typing a password and a
+    six-digit TOTP into a control-room screen while somebody watches, and because
+    an Administrator account with no enrolled secret cannot sign in at all
+    (`login_with_password` refuses an MFA role without one, and enrolling needs a
+    token you can only get by signing in).
+
+    Three locks, all of which must be open:
+
+    1. `ENVIRONMENT` must be `development`. Staging and production are refused
+       here even if the flag below is somehow set.
+    2. `DEV_LOGIN_ENABLED` must be explicitly true. It defaults to false, so
+       this route is dead on a fresh checkout until somebody turns it on.
+    3. `assert_production_safe()` lists the flag, so the app refuses to *boot*
+       in production with it on — the same treatment `OTP_DEBUG_ECHO` gets.
+
+    The sign-in is audited with `dev_login: true` in the metadata, so a token
+    minted this way is distinguishable from a real one forever afterwards. That
+    matters more than it looks: without it, a demo session and a genuine
+    administrator action are the same row in the audit log.
+    """
+    if settings.is_production or settings.environment != "development":
+        # 404 rather than 403 — a route that does not exist outside development
+        # should not advertise that it exists.
+        raise AppError("NOT_FOUND")
+    if not settings.dev_login_enabled:
+        raise AppError(
+            "NOT_FOUND",
+            details={"hint": "set DEV_LOGIN_ENABLED=true in .env to enable development sign-in"},
+        )
+
+    user = await auth_service.get_user_by_phone(session, normalise_phone(payload.phone))
+    if user is None or not user.is_active:
+        raise AppError("INVALID_CREDENTIALS", details={"reason": "no such seeded account"})
+    if user.role == "pilgrim":
+        # Pilgrims sign in by OTP, and `OTP_DEBUG_ECHO` already makes that a
+        # two-call flow in development. Handing out pilgrim tokens here would be
+        # a second, less visible path to the same thing.
+        raise AppError("INVALID_CREDENTIALS", details={"reason": "dev login is for staff accounts"})
+
+    # `mfa_verified=True` on purpose: the point of this route is to skip the
+    # TOTP prompt. It is why the environment guards above are not negotiable.
+    pair = await auth_service.issue_tokens(session, user, mfa_verified=True)
+
+    await audit_service.record(
+        session,
+        action=AuditAction.LOGIN_SUCCESS,
+        actor_id=user.id,
+        actor_role=user.role,
+        target_type="user",
+        target_id=user.id,
+        meta={"dev_login": True, "mfa_bypassed": requires_mfa(user.role)},
+        ip=client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
+    return _token_response(pair)

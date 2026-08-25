@@ -1035,3 +1035,583 @@ button {
     min-height: 420px;
   }
 }
+
+/* --- incidents (Phase 5) -------------------------------------------------- */
+.incidents {
+  padding: var(--sp-4);
+  overflow-y: auto;
+}
+
+.incidents__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+
+.incidents__head h2 {
+  margin: 0;
+  font-size: var(--fs-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+.incidents__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--sp-3);
+}
+
+.incident {
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+
+.incident--critical {
+  border-left-color: var(--sindoor);
+}
+.incident--high {
+  border-left-color: var(--saffron);
+}
+.incident--normal {
+  border-left-color: var(--amber);
+}
+.incident--low {
+  border-left-color: var(--text-faint);
+}
+
+/* A breached SLA is the row an inquiry reads. It gets a ring, not just a tint —
+ * colour alone is not enough in a dim room, and some operators are colour-blind. */
+.incident--breached {
+  background: rgb(196 43 28 / 0.14);
+  box-shadow: inset 0 0 0 1px var(--sindoor);
+}
+
+/* An SOS came from a person pressing a button, not from a threshold. */
+.incident--sos {
+  border-top: 2px solid var(--saffron);
+}
+
+.incident__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  font-size: var(--fs-xs);
+}
+
+.incident__ref {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.incident__severity {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.incident__zone,
+.incident__status {
+  color: var(--text-faint);
+}
+
+.incident__type {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-md);
+  text-transform: capitalize;
+}
+
+.incident__desc {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.incident__sla {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.incident__sla--breached {
+  color: var(--sindoor);
+  font-weight: 600;
+}
+
+.incident__delayed {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--amber);
+}
+
+.incident__unit,
+.incident__audio {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.incident__error {
+  margin: var(--sp-2) 0 0;
+  color: var(--sindoor);
+  font-size: var(--fs-xs);
+}
+
+.incident__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+
+.incident__close {
+  display: flex;
+  gap: var(--sp-1);
+  flex: 1;
+  min-width: 200px;
+}
+
+.incident__close input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-xs);
+}
+
+.incident__meta {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  text-transform: capitalize;
+}
+
+/* --- dispatch dialog ------------------------------------------------------ */
+.dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(13 18 32 / 0.75);
+  z-index: 50;
+  padding: var(--sp-4);
+}
+
+.dialog {
+  width: min(560px, 100%);
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  border-top: 3px solid var(--saffron);
+}
+
+.dialog__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+
+.dialog__head h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+}
+
+.dialog__ref {
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+  margin-left: auto;
+}
+
+.dialog__error {
+  margin: 0 0 var(--sp-3);
+  padding: var(--sp-2);
+  background: rgb(196 43 28 / 0.15);
+  border-left: 2px solid var(--sindoor);
+  font-size: var(--fs-sm);
+}
+
+.dialog__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+
+.dispatch__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.dispatch__unit {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: var(--sp-2);
+  align-items: baseline;
+  width: 100%;
+  padding: var(--sp-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dispatch__unit:hover {
+  background: var(--surface-3);
+}
+
+/* Nothing is pre-selected — a default under time pressure is an auto-dispatch
+ * with an extra click. The selected state has to be unmistakable. */
+.dispatch__unit--selected {
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 2px var(--saffron);
+}
+
+.dispatch__callsign {
+  font-weight: 600;
+}
+
+.dispatch__type {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  text-transform: capitalize;
+}
+
+.dispatch__distance,
+.dispatch__eta {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.dispatch__caveats {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--amber);
+}
+
+.dispatch__caveats em {
+  font-style: normal;
+}
+
+.dispatch__best {
+  grid-column: 1 / -1;
+  font-size: var(--fs-xs);
+  color: var(--tulsi);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dispatch__available {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.dispatch__note {
+  margin: var(--sp-3) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+
+/* --- breach ledger (Phase 6) ---------------------------------------------- */
+.ledger {
+  padding: var(--sp-4);
+  overflow-y: auto;
+}
+
+.ledger__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+
+.ledger__head h2 {
+  margin: 0;
+  font-size: var(--fs-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+/* The chain banner sits above the records, not beside them. If the ledger does
+ * not verify, nothing below it is worth acting on — so it is read first. */
+.chain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-4);
+  border-radius: var(--radius);
+  border-left: 3px solid var(--border-strong);
+}
+
+.chain--intact {
+  background: rgb(46 125 91 / 0.12);
+  border-left-color: var(--tulsi);
+}
+
+.chain--broken {
+  background: rgb(196 43 28 / 0.16);
+  border-left-color: var(--sindoor);
+  box-shadow: inset 0 0 0 1px var(--sindoor);
+}
+
+.chain__state {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chain__meta {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.chain__breaks {
+  margin: 0;
+  padding-left: var(--sp-4);
+  font-size: var(--fs-xs);
+  color: var(--text);
+}
+
+.ledger__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--sp-3);
+}
+
+.breach {
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+
+/* Pending is a question, not a finding. It gets the attention colour; the
+ * decided states recede. */
+.breach--pending {
+  border-left-color: var(--amber);
+}
+.breach--verified {
+  border-left-color: var(--sindoor);
+}
+.breach--false_positive,
+.breach--authorised {
+  border-left-color: var(--text-faint);
+  opacity: 0.75;
+}
+
+.breach--redacted {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--surface-2),
+    var(--surface-2) 8px,
+    var(--surface) 8px,
+    var(--surface) 16px
+  );
+}
+
+.breach__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  font-size: var(--fs-xs);
+}
+
+.breach__seq {
+  font-weight: 600;
+}
+
+.breach__gate,
+.breach__when {
+  color: var(--text-dim);
+}
+
+.badge--review-pending {
+  background: var(--amber);
+  color: var(--ink);
+}
+.badge--review-verified {
+  background: var(--sindoor);
+  color: var(--paper);
+}
+.badge--review-false_positive,
+.badge--review-authorised {
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+}
+
+.breach__claim {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.breach__meta,
+.breach__hash {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.breach__hash {
+  color: var(--text-faint);
+}
+
+.breach__redacted {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--amber);
+}
+
+.breach__reviewed {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.breach__error {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--sindoor);
+}
+
+.breach__reason {
+  width: 100%;
+  margin-top: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-xs);
+}
+
+.breach__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+.breach__clip-btn {
+  margin-top: var(--sp-2);
+}
+
+.breach__views {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+.breach__notice {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+.breach__uri {
+  padding: var(--sp-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--fs-xs);
+  word-break: break-all;
+}
+
+.ledger__note {
+  margin: var(--sp-4) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+
+/* --- development sign-in --------------------------------------------------
+ * Deliberately does not look like part of the product. This block is removed
+ * from a production bundle by `import.meta.env.DEV`, but while it is on screen
+ * it should be obvious that it is scaffolding rather than a feature.
+ */
+.devlogin {
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-4);
+  border-top: 1px dashed var(--border-strong);
+}
+
+.devlogin__title {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+
+.devlogin__title code {
+  font-family: var(--font-mono);
+  color: var(--amber);
+}
+
+.devlogin__button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 var(--sp-2);
+  width: 100%;
+  margin-bottom: var(--sp-1);
+  padding: var(--sp-2);
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  text-align: left;
+  cursor: pointer;
+}
+
+.devlogin__button:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-style: solid;
+}
+
+.devlogin__button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.devlogin__button strong {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.devlogin__button span {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+.devlogin__button em {
+  grid-column: 1 / -1;
+  font-style: normal;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}

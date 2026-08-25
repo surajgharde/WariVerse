@@ -18,9 +18,11 @@ from app.core.db import SessionFactory
 from app.core.logging import get_logger, set_trace_id
 from app.core.redis_client import aw, redis
 from app.core.security import now_utc
-from app.models import Zone
+from app.models import PurgeLog, Zone
 from app.services import (
     alert_service,
+    audit_service,
+    breach_service,
     config_service,
     crowd_service,
     incident_service,
@@ -50,6 +52,13 @@ SLA_SWEEP_INTERVAL_SECONDS = 15
 #: Photo retention is measured in days, so this runs hourly.  Anything more
 #: eager is a database scan every few minutes to find nothing.
 PHOTO_PURGE_INTERVAL_SECONDS = 3600
+
+#: Breach clips are on a 90-day clock; hourly is far more often than needed and
+#: costs one indexed query.
+BREACH_PURGE_INTERVAL_SECONDS = 3600
+#: A tamper-evident ledger nobody checks is evident to nobody. Hourly means a
+#: break is found within an hour of being made.
+CHAIN_VERIFY_INTERVAL_SECONDS = 3600
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,14 +294,112 @@ async def run_photo_purge(at: datetime | None = None) -> int:
     Returns the count.  The object-store deletion is not done here on purpose —
     `purge_missing_person_photos` explains why: a purge that half-succeeds should
     leave the row pointing at the blob rather than orphan it.
+
+    A `purge_log` row is written on *every* run, including the runs that purge
+    nothing.  Section 12 asks for "auto-purge job with a purge log", and a log
+    that only records the deletions cannot answer the question a governance
+    review actually asks — not "what was deleted" but "has this been running".
+    The empty rows are the evidence that it has.
     """
     set_trace_id()
+    moment = at or now_utc()
+
     async with SessionFactory() as session:
-        purged = await incident_service.purge_missing_person_photos(session, at=at)
+        purged = await incident_service.purge_missing_person_photos(session, at=moment)
+        session.add(
+            PurgeLog(
+                target_type="missing_person_photo",
+                rows_affected=len(purged),
+                cutoff=moment,
+                executed_at=moment,
+                detail={"retention_days": incident_service.PHOTO_RETENTION_DAYS},
+            )
+        )
         await session.commit()
+
     if purged:
         logger.info("missing_person_photos_purged", extra={"count": len(purged)})
     return len(purged)
+
+
+async def run_breach_clip_purge(at: datetime | None = None) -> int:
+    """Clear breach evidence clips past their retention window (Section 4/M5).
+
+    The record and its hash stay; only the clip goes. A ledger whose rows
+    disappeared on a 90-day timer would fail its own chain verification every
+    quarter by design, which would train everyone to ignore the one alarm that
+    is supposed to mean something.
+
+    A `purge_log` row is written on every run, including the empty ones — the
+    evidence that retention has been applied all season rather than since last
+    Tuesday.
+    """
+    set_trace_id()
+    moment = at or now_utc()
+
+    async with SessionFactory() as session:
+        retention_days = await config_service.get_int(session, "breach_retention_days")
+        purged = await breach_service.purge_expired_clips(session, at=moment)
+        session.add(
+            PurgeLog(
+                target_type="breach_clip",
+                rows_affected=len(purged),
+                cutoff=moment,
+                executed_at=moment,
+                detail={"retention_days": retention_days, "sequences": purged[:100]},
+            )
+        )
+        await session.commit()
+
+    if purged:
+        logger.info("breach_clips_purged", extra={"count": len(purged)})
+    return len(purged)
+
+
+async def run_chain_verification(at: datetime | None = None) -> bool:
+    """Verify the breach ledger's hash chain on a schedule.
+
+    Section 4/M5 makes the chain the thing that survives political pressure, and
+    a tamper-evident record nobody checks is a record that is evident to nobody.
+    Running it hourly means a break is discovered within an hour of happening
+    rather than at the moment somebody needs the ledger to hold up.
+
+    A failure is logged at ERROR and written to the audit log, which is
+    append-only — so the discovery of tampering cannot itself be quietly
+    removed.
+    """
+    set_trace_id()
+    moment = at or now_utc()
+
+    async with SessionFactory() as session:
+        report = await breach_service.verify_chain(session)
+        if not report.intact:
+            logger.error(
+                "breach_chain_verification_failed",
+                extra={
+                    "breaks": len(report.breaks),
+                    "first_break_sequence": report.breaks[0].sequence if report.breaks else None,
+                    "events_checked": report.events_checked,
+                },
+            )
+            await audit_service.record(
+                session,
+                action=audit_service.AuditAction.AUDIT_VIEWED,
+                actor_id=None,
+                actor_role="system",
+                target_type="breach_chain",
+                meta={
+                    "scheduled_check": True,
+                    "intact": False,
+                    "breaks": [
+                        {"sequence": b.sequence, "problem": b.problem} for b in report.breaks[:20]
+                    ],
+                    "events_checked": report.events_checked,
+                    "verified_at": moment.isoformat(),
+                },
+            )
+            await session.commit()
+    return report.intact
 
 
 async def scheduled_reslot() -> None:
@@ -331,3 +438,15 @@ async def scheduled_photo_purge() -> None:
     if not await _acquire("photo_purge", PHOTO_PURGE_INTERVAL_SECONDS - 60):
         return
     await run_photo_purge()
+
+
+async def scheduled_breach_purge() -> None:
+    if not await _acquire("breach_purge", BREACH_PURGE_INTERVAL_SECONDS - 60):
+        return
+    await run_breach_clip_purge()
+
+
+async def scheduled_chain_verification() -> None:
+    if not await _acquire("chain_verify", CHAIN_VERIFY_INTERVAL_SECONDS - 60):
+        return
+    await run_chain_verification()

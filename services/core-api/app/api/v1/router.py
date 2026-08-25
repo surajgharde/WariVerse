@@ -12,12 +12,14 @@ from app.api.v1.routes import (
     admin,
     alerts,
     auth,
+    breach,
     cameras,
     checkpoints,
     command,
     crowd,
     incidents,
     ingest,
+    missing_persons,
     pass_admin,
     passes,
     users,
@@ -48,7 +50,9 @@ api_router.include_router(command.router)
 
 # Phase 5 — incidents, SOS, dispatch, missing persons
 api_router.include_router(incidents.router)
+api_router.include_router(missing_persons.router)
 
-# Phase 6 — breach            (breaches, review, clips)
+# Phase 6 — breach ledger, review, evidence clips, tripwires
+api_router.include_router(breach.router)
 # Phase 8 — forecast          (forecast)
 # Phase 9 — palkhi, assistant (dindis, halt-towns, assistant)

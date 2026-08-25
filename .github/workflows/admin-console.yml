@@ -102,6 +102,20 @@ jobs:
               "/api/v1/command/changes",
               "/api/v1/command/replay",
               "/api/v1/command/config",
+              "/api/v1/incidents",
+              "/api/v1/incidents/{incident_id}",
+              "/api/v1/incidents/{incident_id}/dispatch",
+              "/api/v1/incidents/{incident_id}/dispatch-options",
+              "/api/v1/responders",
+              "/api/v1/missing-persons",
+              "/api/v1/sos",
+              "/api/v1/breaches",
+              "/api/v1/breaches/{breach_id}",
+              "/api/v1/breaches/{breach_id}/review",
+              "/api/v1/breaches/{breach_id}/clip",
+              "/api/v1/breaches/verify",
+              "/api/v1/breaches/summary",
+              "/api/v1/tripwires",
           ]
           missing = [p for p in required_paths if p not in paths]
           assert not missing, f"the console calls routes that no longer exist: {missing}"
@@ -131,7 +145,51 @@ jobs:
                            "trigger_metric", "trigger_value", "threshold_value",
                            "confidence", "recommended_action", "recommended_action_mr",
                            "rule_id", "escalation_level", "acknowledged_at", "created_at"},
+              "IncidentOut": {"id", "reference", "type", "severity", "status", "source",
+                              "zone_id", "zone_code", "location", "description",
+                              "has_audio_note", "sla_due_at", "sla_breached",
+                              "seconds_to_sla", "first_response_at",
+                              "assigned_responder_id", "assigned_call_sign",
+                              "client_reported_at", "delayed_by_seconds",
+                              "outcome_note", "created_at", "seconds_open", "timeline"},
+              "SuggestionOut": {"responder_id", "call_sign", "unit_type",
+                                "distance_m", "eta_seconds", "type_rank", "caveats"},
+              "DispatchOptions": {"incident_id", "suggestions", "available_units",
+                                  "note", "note_mr"},
+              "ResponderOut": {"id", "call_sign", "unit_type", "status", "location",
+                               "last_ping_at", "seconds_since_ping",
+                               "assigned_incident_id", "assigned_incident_reference"},
+              "MissingPersonOut": {"id", "incident_id", "incident_reference", "name",
+                                   "age", "has_photo", "last_seen_zone_code", "status",
+                                   "reported_at", "purge_after", "open_for_seconds"},
+              "SosAck": {"incident_id", "reference", "status", "message", "message_mr",
+                         "responder_eta_seconds", "joined_existing"},
+              "BreachOut": {"id", "sequence", "tripwire_id", "camera_id", "gate_id",
+                            "gate_code", "occurred_at", "direction", "crossing_count",
+                            "confidence", "has_clip", "clip_sha256", "pass_scan_checked",
+                            "review_status", "reviewed_at", "review_reason",
+                            "redacted_at", "redaction_reason", "chain_hash", "prev_hash",
+                            "purge_after", "clip_views"},
+              "ChainReportOut": {"events_checked", "intact", "breaks", "head_hash",
+                                 "verified_at", "note", "note_mr"},
+              "ChainBreakOut": {"sequence", "breach_id", "problem", "expected", "found"},
+              "ClipOut": {"breach_id", "sequence", "clip_uri", "clip_sha256",
+                          "notice", "notice_mr", "logged_at"},
+              "DailySummaryOut": {"day", "total", "by_review_status", "by_gate_hour",
+                                  "chain_intact", "chain_head", "notice", "notice_mr"},
           }
+
+          # The ledger's hard constraint, checked as a contract rather than left
+          # to review: no schema in the breach module may carry a field that
+          # could identify a person. Section 4/M5 and Section 12.
+          identifying = {"track_id", "person_id", "face", "embedding", "identity",
+                         "holder_phone_hash", "phone", "reporter_phone_hash"}
+          for model in ("BreachOut", "ClipOut", "DailySummaryOut", "CrossingIn"):
+              if model not in components:
+                  continue
+              leaked = set(components[model].get("properties", {})) & identifying
+              assert not leaked, f"{model} exposes identifying field(s): {sorted(leaked)}"
+
 
           problems = []
           for model, fields in required_fields.items():

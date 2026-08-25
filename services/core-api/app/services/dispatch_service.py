@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from math import asin, cos, radians, sin, sqrt
 
-from app.models.incidents import IncidentSeverity, IncidentType
+from app.models.incidents import IncidentType
 
 #: Mean Earth radius in metres.
 EARTH_RADIUS_M = 6_371_000.0
@@ -80,13 +80,9 @@ def walk_eta(distance_m: float, *, speed_ms: float = CROWD_WALK_SPEED_MS) -> tim
     return timedelta(seconds=distance_m / speed_ms)
 
 
-def sla_due(severity: IncidentSeverity | str, *, from_time, minutes: dict | None = None):
-    """When first responder contact is due for this severity."""
-    from app.models.incidents import SLA_MINUTES
-
-    table = minutes or SLA_MINUTES
-    key = severity if isinstance(severity, IncidentSeverity) else IncidentSeverity(severity)
-    return from_time + timedelta(minutes=table[key])
+# The SLA clock lives in `incident_service.sla_due_at`, not here. Two functions
+# computing when a responder is due is two places to get it wrong, and the one
+# that drifts is always the copy nobody remembered existed.
 
 
 @dataclass(frozen=True, slots=True)

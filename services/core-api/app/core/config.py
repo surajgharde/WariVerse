@@ -51,6 +51,20 @@ class Settings(BaseSettings):
     otp_max_attempts: int = 5
     otp_debug_echo: bool = False
 
+    # --- development conveniences ---------------------------------------
+    # One-click sign-in as a seeded staff account, for local development and
+    # demos.  Off by default and refused in production by
+    # `assert_production_safe` — the same treatment `otp_debug_echo` gets, for
+    # the same reason: a switch that hands out staff tokens without a password
+    # must not be one somebody can leave on by accident.
+    dev_login_enabled: bool = False
+    # Fixed TOTP secret for the seeded MFA roles in development.  Real
+    # deployments enrol per user through `/auth/mfa/enrol`; this exists so the
+    # seeded Administrator can actually sign in, which it otherwise cannot —
+    # login refuses an MFA role with no enrolled secret, and enrolling needs a
+    # token you can only get by logging in.
+    dev_mfa_secret: str = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+
     # --- rate limits (Section 9) ----------------------------------------
     rate_limit_pass_booking_per_day: int = 5
     rate_limit_sos_per_10min: int = 3
@@ -105,6 +119,10 @@ class Settings(BaseSettings):
             problems.append("QR_SIGNING_SECRET is still the development default — passes would be forgeable")
         if self.otp_debug_echo:
             problems.append("OTP_DEBUG_ECHO is on — OTPs would be returned over the API")
+        if self.dev_login_enabled:
+            problems.append(
+                "DEV_LOGIN_ENABLED is on — anyone could sign in as an administrator without a password"
+            )
         if not self.contact_encryption_key:
             problems.append("CONTACT_ENCRYPTION_KEY is unset — contact table cannot be encrypted")
         return problems

@@ -32,6 +32,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -138,7 +139,7 @@ async def add_event(
     action: str,
     actor_id: uuid.UUID | None = None,
     note: str | None = None,
-    meta: dict | None = None,
+    meta: dict[str, Any] | None = None,
     at: datetime | None = None,
 ) -> IncidentEvent:
     """Append one line to the incident's timeline."""
@@ -961,10 +962,44 @@ async def purge_missing_person_photos(session: AsyncSession, *, at: datetime | N
     return purged
 
 
+async def audit_photo_view(
+    session: AsyncSession,
+    record: MissingPerson,
+    *,
+    actor_id: uuid.UUID,
+    actor_role: str,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> None:
+    """Log who looked at a missing person's photograph.
+
+    Section 12 requires this for breach evidence clips; it is applied here too,
+    for the same reason and without being asked. The photo of a missing child is
+    the most sensitive image this system holds, and a record of who opened it is
+    what makes handing it to a search party a controlled act rather than a hope.
+
+    The name is deliberately not in the meta — the audit log is append-only and
+    outlives the case's own 30-day retention.
+    """
+    await audit_service.record(
+        session,
+        action=AuditAction.MISSING_PHOTO_VIEWED,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        target_type="missing_person",
+        target_id=record.id,
+        meta={"case_status": record.status, "reported_at": record.reported_at.isoformat()},
+        ip=ip,
+        user_agent=user_agent,
+    )
+
+
 # ---------------------------------------------------------------------------
 # events
 # ---------------------------------------------------------------------------
-def event_payload(incident: Incident, *, zone: Zone | None = None, extra: dict | None = None) -> dict:
+def event_payload(
+    incident: Incident, *, zone: Zone | None = None, extra: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """The socket payload for an incident change.
 
     Deliberately thin, and deliberately free of the reporter. The command centre
@@ -987,6 +1022,8 @@ def event_payload(incident: Incident, *, zone: Zone | None = None, extra: dict |
     }
 
 
-async def publish(event_type: str, incident: Incident, *, session: AsyncSession, extra: dict | None = None) -> None:
+async def publish(
+    event_type: str, incident: Incident, *, session: AsyncSession, extra: dict[str, Any] | None = None
+) -> None:
     zone = await session.get(Zone, incident.zone_id) if incident.zone_id else None
     await events.publish(event_type, event_payload(incident, zone=zone, extra=extra))

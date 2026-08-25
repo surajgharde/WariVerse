@@ -31,7 +31,12 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useReducer,
 import type { ReactNode } from 'react'
 
 import { tokens } from '@/api/client'
-import { alerts as alertsApi, command as commandApi, crowd as crowdApi } from '@/api/endpoints'
+import {
+  alerts as alertsApi,
+  command as commandApi,
+  crowd as crowdApi,
+  incidents as incidentsApi,
+} from '@/api/endpoints'
 import { CrowdSocket } from '@/api/socket'
 import type { SocketState } from '@/api/socket'
 import type {
@@ -39,6 +44,10 @@ import type {
   Camera,
   ChangeDigest,
   ConsoleConfig,
+  Incident,
+  IncidentSeverity,
+  IncidentStatus,
+  IncidentType,
   KpiStrip,
   ServerEvent,
   WsZone,
@@ -61,6 +70,7 @@ interface State {
   statuses: Record<string, ZoneStatus>
   cameras: Camera[]
   alerts: Alert[]
+  incidents: Incident[]
   kpis: KpiStrip | null
   digest: ChangeDigest | null
   socket: SocketState
@@ -75,6 +85,7 @@ type Action =
   | { type: 'zones'; payload: ZoneStatus[] }
   | { type: 'zone'; payload: ZoneStatus }
   | { type: 'alerts'; payload: Alert[] }
+  | { type: 'incidents'; payload: Incident[] }
   | { type: 'cameras'; payload: Camera[] }
   | { type: 'kpis'; payload: KpiStrip }
   | { type: 'digest'; payload: ChangeDigest }
@@ -88,6 +99,7 @@ const EMPTY: State = {
   statuses: {},
   cameras: [],
   alerts: [],
+  incidents: [],
   kpis: null,
   digest: null,
   socket: 'connecting',
@@ -109,6 +121,8 @@ function reducer(state: State, action: Action): State {
       return { ...state, statuses: { ...state.statuses, [action.payload.zone_id]: action.payload } }
     case 'alerts':
       return { ...state, alerts: action.payload }
+    case 'incidents':
+      return { ...state, incidents: action.payload }
     case 'cameras':
       return { ...state, cameras: action.payload }
     case 'kpis':
@@ -173,7 +187,30 @@ interface LiveStore extends State {
   statusFor: (zoneId: string) => ZoneStatus | null
   acknowledge: (alertId: string, note?: string) => Promise<void>
   resolve: (alertId: string, resolution: string) => Promise<void>
+  /** Open an incident from an alert, acknowledging the alert in the same act. */
+  escalateToIncident: (alert: Alert, severity?: IncidentSeverity) => Promise<Incident>
+  dispatchUnit: (incidentId: string, responderId: string, note?: string) => Promise<void>
+  updateIncident: (
+    incidentId: string,
+    body: { status?: IncidentStatus; note?: string; outcome_note?: string },
+  ) => Promise<void>
   refresh: () => void
+}
+
+/**
+ * Which kind of incident an alert becomes.
+ *
+ * Only the mappings that are unambiguous are listed. Everything else becomes
+ * `other` rather than being guessed at — an incident filed under the wrong type
+ * gets the wrong responder suggested, and a wrong suggestion under time
+ * pressure is worse than no suggestion.
+ */
+function incidentTypeForAlert(alertType: string): IncidentType {
+  if (alertType.startsWith('density') || alertType === 'stagnation' || alertType === 'counterflow') {
+    return 'crowd_crush_risk'
+  }
+  if (alertType === 'camera_offline') return 'facility_failure'
+  return 'other'
 }
 
 const LiveContext = createContext<LiveStore | null>(null)
@@ -187,6 +224,11 @@ export function LiveProvider({ children, onAuthFailure }: { children: ReactNode;
   const loadAlerts = useCallback(async () => {
     const page = await alertsApi.list()
     dispatch({ type: 'alerts', payload: page.items })
+  }, [])
+
+  const loadIncidents = useCallback(async () => {
+    const page = await incidentsApi.list()
+    dispatch({ type: 'incidents', payload: page.items })
   }, [])
 
   const loadCrowd = useCallback(async () => {
@@ -205,12 +247,13 @@ export function LiveProvider({ children, onAuthFailure }: { children: ReactNode;
     let cancelled = false
     ;(async () => {
       try {
-        const [config, zones, live, cameras, alertPage, kpis, digest] = await Promise.all([
+        const [config, zones, live, cameras, alertPage, incidentPage, kpis, digest] = await Promise.all([
           commandApi.config(),
           crowdApi.zones(),
           crowdApi.live(),
           crowdApi.cameras(),
           alertsApi.list(),
+          incidentsApi.list(),
           commandApi.kpis(),
           commandApi.changes(),
         ])
@@ -220,7 +263,16 @@ export function LiveProvider({ children, onAuthFailure }: { children: ReactNode;
         for (const status of live.zones) statuses[status.zone_id] = status
         dispatch({
           type: 'bootstrapped',
-          payload: { config, zones, statuses, cameras, alerts: alertPage.items, kpis, digest },
+          payload: {
+            config,
+            zones,
+            statuses,
+            cameras,
+            alerts: alertPage.items,
+            incidents: incidentPage.items,
+            kpis,
+            digest,
+          },
         })
       } catch (exc) {
         if (!cancelled) {
@@ -258,6 +310,16 @@ export function LiveProvider({ children, onAuthFailure }: { children: ReactNode;
             // needs the whole alert including who acknowledged it.
             void loadAlerts()
             break
+          case 'incident.raised':
+          case 'incident.updated':
+          case 'incident.sla_breached':
+            // Same reasoning as alerts: the payload is a reference, and the
+            // board needs the whole incident including its assigned unit. An
+            // SLA breach in particular must not be patched in from an event —
+            // it is the row an inquiry reads, and it comes from the database.
+            void loadIncidents()
+            void loadDerived()
+            break
           case 'camera.status_changed':
             void crowdApi.cameras().then((cameras) => dispatch({ type: 'cameras', payload: cameras }))
             break
@@ -271,7 +333,7 @@ export function LiveProvider({ children, onAuthFailure }: { children: ReactNode;
 
     socket.start()
     return () => socket.stop()
-  }, [loadAlerts, onAuthFailure])
+  }, [loadAlerts, loadIncidents, loadDerived, onAuthFailure])
 
   // --- the staleness clock ------------------------------------------------
   // One second, deliberately. This is what turns a zone grey when its pipeline
@@ -324,11 +386,63 @@ export function LiveProvider({ children, onAuthFailure }: { children: ReactNode;
     [loadAlerts, loadDerived],
   )
 
+  /**
+   * Open an incident from an alert.
+   *
+   * The alert is acknowledged as part of the same action. An operator who
+   * dispatches a unit has plainly seen the alert, and leaving it unacknowledged
+   * would keep the escalation clock running against somebody who is already
+   * dealing with it.
+   */
+  const escalateToIncident = useCallback(
+    async (alert: Alert, severity: IncidentSeverity = 'high'): Promise<Incident> => {
+      const incident = await incidentsApi.create({
+        type: incidentTypeForAlert(alert.type),
+        severity,
+        zone_id: alert.zone_id,
+        description:
+          `Raised from alert ${alert.type} (${alert.trigger_metric} ${alert.trigger_value}).` +
+          (alert.recommended_action ? ` Recommended: ${alert.recommended_action}` : ''),
+        source: 'control_room',
+      })
+      if (alert.status === 'open') {
+        await alertsApi.acknowledge(alert.id, `Incident ${incident.reference} opened.`).catch(() => {})
+      }
+      await loadIncidents()
+      void loadAlerts()
+      void loadDerived()
+      return incident
+    },
+    [loadIncidents, loadAlerts, loadDerived],
+  )
+
+  const dispatchUnit = useCallback(
+    async (incidentId: string, responderId: string, note?: string) => {
+      await incidentsApi.dispatch(incidentId, responderId, note)
+      await loadIncidents()
+      void loadDerived()
+    },
+    [loadIncidents, loadDerived],
+  )
+
+  const updateIncident = useCallback(
+    async (
+      incidentId: string,
+      body: { status?: IncidentStatus; note?: string; outcome_note?: string },
+    ) => {
+      await incidentsApi.update(incidentId, body)
+      await loadIncidents()
+      void loadDerived()
+    },
+    [loadIncidents, loadDerived],
+  )
+
   const refresh = useCallback(() => {
     void loadCrowd().catch(() => {})
     void loadAlerts().catch(() => {})
+    void loadIncidents().catch(() => {})
     void loadDerived().catch(() => {})
-  }, [loadCrowd, loadAlerts, loadDerived])
+  }, [loadCrowd, loadAlerts, loadIncidents, loadDerived])
 
   const value = useMemo<LiveStore>(() => {
     const staleAfter = state.config?.stale_reading_seconds ?? 90
@@ -344,9 +458,12 @@ export function LiveProvider({ children, onAuthFailure }: { children: ReactNode;
       },
       acknowledge,
       resolve,
+      escalateToIncident,
+      dispatchUnit,
+      updateIncident,
       refresh,
     }
-  }, [state, acknowledge, resolve, refresh])
+  }, [state, acknowledge, resolve, escalateToIncident, dispatchUnit, updateIncident, refresh])
 
   return <LiveContext.Provider value={value}>{children}</LiveContext.Provider>
 }

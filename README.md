@@ -75,8 +75,22 @@ curl -s localhost:8000/api/v1/auth/me -H "authorization: Bearer <access_token>"
 | 9000000005   | `responder`        |
 
 Sign in at `POST /api/v1/auth/login`. Administrator and System Admin get an MFA
-challenge instead of tokens — enrol at `/auth/mfa/enrol`, confirm at
-`/auth/mfa/enrol/confirm`, then complete sign-in at `/auth/mfa/verify`.
+challenge instead of tokens — the seed enrols them with the fixed development
+secret in `DEV_MFA_SECRET`, so any TOTP app will produce a working code. (Real
+deployments enrol per user at `/auth/mfa/enrol`; production seeds nothing.)
+
+**Development sign-in.** With `DEV_LOGIN_ENABLED=true` in `.env`, the admin
+console's sign-in screen grows a set of one-click buttons — pick a role, no
+password, no TOTP. `POST /api/v1/auth/dev-login` is what they call.
+
+Three locks, all of which must be open: `ENVIRONMENT` must be `development`,
+`DEV_LOGIN_ENABLED` must be explicitly true (it defaults to false), and
+`assert_production_safe()` lists the flag so the app **refuses to boot** in
+production with it on — the same treatment `OTP_DEBUG_ECHO` gets. The console
+half is gated on `import.meta.env.DEV`, so it is compiled out of a production
+bundle rather than merely hidden. Every dev sign-in is audited with
+`dev_login: true`, so a token minted this way stays distinguishable from a real
+one.
 
 The seed also creates twelve responder units — ambulances, medical teams,
 police, fire, volunteer squads and help desks — spread across the complex with a
@@ -118,7 +132,7 @@ cd apps/admin-console  && npm install && npm test
 | 3 | M2 Crowd intelligence — sim engine, YOLOv8 pipeline, zone metrics | **done** |
 | 4 | M3 Command Center — live map, alert feed, KPIs, replay scrubber | **done** |
 | 5 | M4 Incidents & SOS — dispatch, SLA, missing persons | **done** |
-| 6 | M5 Queue breach ledger — tripwires, hash chain, review flow | not started |
+| 6 | M5 Queue breach ledger — tripwires, hash chain, review flow | **done** |
 | 7 | M7 Pilgrim PWA — offline-first, Marathi | not started |
 | 8 | M6 Forecasting — LightGBM, intervals, recommendation rules | not started |
 | 9 | M8 Palkhi tracking + Gemini assistant | not started |
@@ -386,6 +400,73 @@ offline story. The PWA's queue-and-retry (Phase 7) covers a pilgrim who loses
 signal entirely. Nothing yet covers a pilgrim whose phone can reach the cell
 network but not us — which is the more common failure at a crowded ghat, and
 the exact case the SMS fallback was specified for.
+
+### Phase 6 in detail
+
+The queue-breach ledger. Section 4/M5 opens with "this is the most sensitive
+module in the product. Build it carefully" — this is what careful meant.
+
+```bash
+# with the stack up and seeded
+curl -s localhost:8000/api/v1/breaches/verify -H "authorization: Bearer <officer token>"
+```
+
+- **What it records.** That an unauthorised entry occurred at a gate at a time.
+  Not who. There is no column in `breach_events` that identifies a person and no
+  code path that could populate one — the constraint is enforced by the schema
+  having nowhere to put an identity, and by a CI check that fails if a field
+  named for a track, a face or a phone appears in any breach schema.
+- **Three filters before anything is written.** A crossing becomes a record only
+  if it is in the restricted direction, the gate was flagged closed, *and* no
+  valid pass was scanned at that gate within ±30 seconds. Most crossings never
+  become events, and the rejection reasons come back on the ingest response —
+  "the engine saw 40 and the ledger has 3" is a question somebody will ask.
+- **The hash chain.** `chain_hash = SHA256(prev_hash ‖ canonical(payload))` over
+  a canonical JSON serialisation with sorted keys. Edit an `occurred_at` by a
+  microsecond, reorder a sequence, delete a row — `GET /breaches/verify`
+  recomputes every hash and names each break separately, because "one bad row"
+  and "everything after this was rewritten" are different findings. The database
+  enforces it from below too: `trg_breach_evidence_immutable` raises on any
+  UPDATE touching an evidence column.
+- **Review columns are deliberately outside the hash.** If `review_status` were
+  inside it, the first officer to mark an event verified would invalidate every
+  hash after it — a chain that fires constantly means nothing.
+- **Deletion redacts the clip, never the record.** Taken literally, Section
+  4/M5's deletion rule means `DELETE FROM breach_events`, which breaks the chain
+  — and a broken chain cannot distinguish an authorised deletion from tampering,
+  which is the one distinction the ledger exists to make. So `DELETE
+  /breaches/{id}` clears the clip, keeps the row and its hash, and records who
+  and why. `clip_sha256` survives, so if the clip resurfaces from a backup it
+  can still be shown to be the one the record refers to. The literal reading is
+  still *detected*: an out-of-band row deletion breaks the chain, which is what
+  verification is for.
+- **`breach:delete` is the one permission Administrator is denied.** The temple
+  administrator who might come under pressure to make a record go away is not
+  the person who can. System Admin only, reason mandatory, logged to the
+  append-only audit table.
+- **Clip playback is re-authenticated and logged.** `POST` rather than `GET`,
+  because it verifies a password and writes an access-log entry — a GET that
+  must be audited is one a browser will prefetch and replay. A stated purpose is
+  required; failures are audited too.
+- **Nothing is a finding until a human says so.** Every event lands `pending`.
+  The console's ledger view disables the review buttons entirely while the chain
+  does not verify, and puts the chain banner above the records rather than
+  beside them.
+- **Retention.** 90 days, configurable, hourly purge job that clears clips and
+  writes a `purge_log` row on every run — including the empty ones, which are
+  the evidence the job has been running all season rather than since Tuesday.
+  An hourly job also re-verifies the chain and writes any failure to the audit
+  log.
+
+Endpoints: `GET /breaches`, `GET /breaches/{id}`, `POST /breaches/{id}/review`,
+`POST /breaches/{id}/clip`, `DELETE /breaches/{id}`, `GET /breaches/verify`,
+`GET /breaches/summary`, `GET|POST /tripwires`, plus `POST /ingest/breach` for
+the vision pipeline.
+
+**One deliberate deviation from the spec text**, the redaction-versus-deletion
+choice above. It is the third such flag in this repo and follows the same rule
+as the other two: where the literal instruction and its stated purpose disagree,
+serve the purpose and say so.
 
 ---
 

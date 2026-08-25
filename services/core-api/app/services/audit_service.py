@@ -53,6 +53,9 @@ class AuditAction:
     INCIDENT_DISPATCHED = "incident.dispatched"
     INCIDENT_STATUS_CHANGED = "incident.status_changed"
     INCIDENT_CLOSED = "incident.closed"
+    # The photo of a missing child is the most sensitive image this system
+    # holds. Every view is logged, on the same principle as breach clips.
+    MISSING_PHOTO_VIEWED = "missing_person.photo_viewed"
 
     BREACH_REVIEWED = "breach.reviewed"
     BREACH_CLIP_VIEWED = "breach.clip_viewed"

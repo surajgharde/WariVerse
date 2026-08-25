@@ -23,7 +23,8 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { ApiError } from '@/api/client'
-import type { Alert } from '@/api/types'
+import type { Alert, Incident } from '@/api/types'
+import { DispatchDialog } from '@/components/DispatchDialog'
 import { useI18n } from '@/i18n'
 import { formatAge, formatClock, formatDensity } from '@/lib/format'
 import { useLive } from '@/state/live'
@@ -73,10 +74,11 @@ function AlertCard({
   pageSeconds: number
 }) {
   const { t, s } = useI18n()
-  const { acknowledge, tick } = useLive()
+  const { acknowledge, escalateToIncident, tick } = useLive()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [arrived, setArrived] = useState(true)
+  const [dispatching, setDispatching] = useState<Incident | null>(null)
 
   // Section 10: alerts pulse once on arrival, then hold. Nothing in a control
   // room animates forever — a pulse that never stops is a pulse nobody sees.
@@ -97,6 +99,28 @@ function AlertCard({
   const critical = alert.severity === 'critical'
   const escalating = unacknowledged && critical && openSeconds >= escalateSeconds
   const paging = unacknowledged && critical && openSeconds >= pageSeconds
+
+  /**
+   * Dispatch from an alert: open an incident, then choose a unit.
+   *
+   * Two steps rather than one, because an alert and an incident are different
+   * claims. An alert says a threshold was crossed; an incident says somebody
+   * needs help and starts an SLA clock against a named severity. Turning the
+   * first into the second is a judgement, and it is recorded as one — the
+   * incident's description carries the alert that prompted it.
+   */
+  const onDispatch = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const incident = await escalateToIncident(alert, alert.severity === 'critical' ? 'critical' : 'high')
+      setDispatching(incident)
+    } catch (exc) {
+      setError(exc instanceof ApiError ? exc.message : 'Could not open an incident.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const onAcknowledge = async () => {
     setBusy(true)
@@ -186,18 +210,18 @@ function AlertCard({
         >
           {t('alerts.acknowledge')}
         </button>
-        {/* Honest rather than decorative: dispatch needs the incident module,
-            and a button that silently does nothing is worse than one that says
-            why it cannot. */}
         <button
           type="button"
           className="btn"
-          disabled
-          title="Dispatch needs the incident module — Phase 5."
+          onClick={() => void onDispatch()}
+          disabled={busy || alert.status === 'resolved'}
+          title="Opens an incident from this alert, then lets you choose a unit."
         >
           {t('alerts.dispatch')}
         </button>
       </footer>
+
+      {dispatching && <DispatchDialog incident={dispatching} onClose={() => setDispatching(null)} />}
     </article>
   )
 }

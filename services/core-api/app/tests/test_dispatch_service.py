@@ -87,6 +87,9 @@ def test_type_fit_beats_raw_distance():
     )
 
     assert [s.call_sign for s in ranked] == ["A-1", "V-1"]
+    # The ambulance ranks first *despite* being further away — which is the
+    # whole point, so assert the distances really do run the other way.
+    assert ranked[0].distance_m is not None and ranked[1].distance_m is not None
     assert ranked[0].distance_m > ranked[1].distance_m
 
 
@@ -222,15 +225,20 @@ def test_sla_due_at_is_measured_from_the_report_not_from_now():
     assert incident_service.sla_due_at("high", at=reported) == reported + timedelta(minutes=10)
 
 
-def test_the_two_sla_helpers_agree():
-    """`dispatch_service.sla_due` and `incident_service.sla_due_at` compute the
-    same deadline. Two clocks that can disagree is a bug waiting for an inquiry.
+def test_there_is_only_one_sla_clock():
+    """Two functions computing when a responder is due is two places to get it
+    wrong, and the one that drifts is always the copy nobody remembered.
+
+    This started as a test that the two helpers agreed. Asserting agreement
+    between duplicates is a weaker guarantee than not having duplicates — the
+    second one can always be added back with a slightly different rounding rule
+    and a test that passes for a while. So the duplicate was deleted and this
+    test guards its absence.
     """
-    reported = datetime(2026, 7, 12, 14, 0, tzinfo=UTC)
-    for severity in IncidentSeverity:
-        assert dispatch_service.sla_due(severity, from_time=reported) == incident_service.sla_due_at(
-            severity, at=reported
-        )
+    assert not hasattr(dispatch_service, "sla_due"), (
+        "the SLA clock belongs to incident_service.sla_due_at alone"
+    )
+    assert callable(incident_service.sla_due_at)
 
 
 def test_reference_codes_avoid_characters_that_get_misheard_on_a_radio():

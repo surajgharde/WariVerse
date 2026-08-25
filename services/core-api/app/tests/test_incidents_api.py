@@ -44,7 +44,9 @@ def bearer(token: str) -> dict[str, str]:
 
 async def reload_incident(session: AsyncSession, incident_id: str) -> Incident:
     """Fetch the row behind a JSON id, so a test can age it or read it raw."""
-    return await session.get(Incident, uuid.UUID(incident_id))
+    incident = await session.get(Incident, uuid.UUID(incident_id))
+    assert incident is not None, f"incident {incident_id} vanished between the API call and the read"
+    return incident
 
 
 # ---------------------------------------------------------------------------
@@ -1085,6 +1087,7 @@ async def test_photos_are_purged_after_retention_and_the_case_survives(
     )
 
     record = await session.get(MissingPerson, uuid.UUID(case_id))
+    assert record is not None
     await session.refresh(record)
     assert record.photo_uri is not None
 

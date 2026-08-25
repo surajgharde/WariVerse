@@ -16,17 +16,19 @@
  * > the rail-map was for; the centre gives the map the room the spec's own
  * > design direction asks for.
  *
- * Incident pins and the Palkhi marker are absent because incidents (Phase 5)
- * and Palkhi tracking (Phase 9) do not exist yet. They are map layers, not
- * redesigns — `ZoneMap` gains two sources when those phases land.
+ * The Palkhi marker is absent because Palkhi tracking (Phase 9) does not exist
+ * yet. It is a map layer, not a redesign — `ZoneMap` gains one source when that
+ * phase lands.
  */
 
 import { useCallback, useState } from 'react'
 
 import type { ReplayFrame } from '@/api/types'
 import { AlertFeed } from '@/components/AlertFeed'
+import { BreachLedger } from '@/components/BreachLedger'
 import { CameraGrid } from '@/components/CameraGrid'
 import { ChangeStrip } from '@/components/ChangeStrip'
+import { IncidentBoard } from '@/components/IncidentBoard'
 import { KpiStrip } from '@/components/KpiStrip'
 import { ReplayScrubber } from '@/components/ReplayScrubber'
 import { SignIn } from '@/components/SignIn'
@@ -36,7 +38,7 @@ import { useI18n } from '@/i18n'
 import { AuthProvider, useAuth } from '@/state/auth'
 import { LiveProvider, useLive } from '@/state/live'
 
-type Tab = 'map' | 'cameras' | 'replay'
+type Tab = 'map' | 'incidents' | 'breaches' | 'cameras' | 'replay'
 
 export default function App() {
   return (
@@ -112,7 +114,7 @@ function Console() {
 
         <main className="centre">
           <nav className="tabs" role="tablist">
-            {(['map', 'cameras', 'replay'] as const).map((key) => (
+            {(['map', 'incidents', 'breaches', 'cameras', 'replay'] as const).map((key) => (
               <button
                 key={key}
                 type="button"
@@ -129,6 +131,10 @@ function Console() {
           <div className="centre__body">
             {tab === 'cameras' ? (
               <CameraGrid />
+            ) : tab === 'incidents' ? (
+              <IncidentBoard />
+            ) : tab === 'breaches' ? (
+              <BreachLedger />
             ) : (
               <>
                 {/* One map instance across both tabs. Remounting MapLibre on a

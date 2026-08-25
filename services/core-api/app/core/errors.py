@@ -156,6 +156,44 @@ ERROR_CATALOG: dict[str, tuple[int, str, str]] = {
         "That case is already closed.",
         "ती नोंद आधीच बंद केली आहे.",
     ),
+    # breach ledger (Phase 6)
+    #
+    # These messages are worded for a Security Officer, not a pilgrim — the
+    # whole module is invisible below that role. They are still bilingual,
+    # because the officer reading them at 2 a.m. in Pandharpur is as likely to
+    # be working in Marathi as anyone else.
+    "BREACH_NOT_FOUND": (404, "That breach record does not exist.", "ती उल्लंघनाची नोंद अस्तित्वात नाही."),
+    "TRIPWIRE_NOT_FOUND": (404, "That tripwire is not configured.", "ती नियंत्रण-रेषा नोंदवलेली नाही."),
+    "REVIEW_REASON_REQUIRED": (
+        400,
+        "Marking a record authorised or a false positive needs a written reason.",
+        "नोंद 'परवानगी होती' किंवा 'चुकीची नोंद' म्हणून ठरवताना लेखी कारण आवश्यक आहे.",
+    ),
+    "DELETION_REASON_REQUIRED": (
+        400,
+        "Removing evidence needs a written reason. It is recorded permanently.",
+        "पुरावा काढून टाकण्यासाठी लेखी कारण आवश्यक आहे. ते कायमस्वरूपी नोंदवले जाते.",
+    ),
+    "BREACH_REDACTED": (
+        409,
+        "That record's evidence has already been removed.",
+        "त्या नोंदीचा पुरावा आधीच काढून टाकला आहे.",
+    ),
+    "CLIP_UNAVAILABLE": (
+        404,
+        "There is no clip on this record, or it has passed its retention period.",
+        "या नोंदीवर चित्रफीत नाही, किंवा तिचा साठवण कालावधी संपला आहे.",
+    ),
+    "REAUTH_REQUIRED": (
+        401,
+        "Viewing evidence needs your password again. Every view is logged.",
+        "पुरावा पाहण्यासाठी पुन्हा पासवर्ड आवश्यक आहे. प्रत्येक वेळी नोंद ठेवली जाते.",
+    ),
+    "CHAIN_BROKEN": (
+        409,
+        "The evidence chain does not verify. Do not act on this ledger until it is investigated.",
+        "पुराव्याची साखळी तपासणीत टिकत नाही. तपास होईपर्यंत या नोंदवहीवर कारवाई करू नका.",
+    ),
 }
 
 _DEFAULT = ("INTERNAL_ERROR", 500)

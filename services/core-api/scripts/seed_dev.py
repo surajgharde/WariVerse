@@ -25,8 +25,9 @@ if sys.platform == "win32":  # psycopg async needs the selector loop on Windows
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.db import SessionFactory, dispose_engine
-from app.core.permissions import Role
+from app.core.permissions import Role, requires_mfa
 from app.core.security import hash_password, hash_phone, normalise_phone, now_utc
 from app.models import Camera, Facility, Gate, Responder, User, Zone
 from app.services.calibration import solve_homography
@@ -113,9 +114,20 @@ FACILITIES = [
 
 async def seed_users(session: AsyncSession) -> int:
     created = 0
+    enrolled = 0
     for phone, name, role in STAFF:
         phone_hash = hash_phone(phone)
-        if await session.scalar(select(User).where(User.phone_hash == phone_hash)):
+        existing = await session.scalar(select(User).where(User.phone_hash == phone_hash))
+        if existing is not None:
+            # Backfill, rather than skip. The seed is run repeatedly against a
+            # database that already has these accounts, and a fix that only
+            # applies to freshly created rows is a fix nobody already running the
+            # stack ever receives. An Administrator seeded before this existed
+            # still cannot sign in, and re-running the seed is the obvious thing
+            # somebody would try.
+            if requires_mfa(existing.role) and not existing.mfa_secret:
+                existing.mfa_secret = settings.dev_mfa_secret
+                enrolled += 1
             continue
         session.add(
             User(
@@ -125,11 +137,20 @@ async def seed_users(session: AsyncSession) -> int:
                 role=role,
                 language="mr",
                 password_hash=hash_password(DEMO_PASSWORD),
+                # Administrator and System Admin cannot sign in at all without an
+                # enrolled secret — `login_with_password` refuses an MFA role that
+                # has none, and `/auth/mfa/enrol` needs a token you can only get by
+                # signing in. Seeding a fixed development secret breaks that
+                # deadlock. It is the same value on every dev machine and is
+                # useless anywhere real, because production seeds nothing.
+                mfa_secret=settings.dev_mfa_secret if requires_mfa(role) else None,
                 is_active=True,
             )
         )
         created += 1
     await session.flush()
+    if enrolled:
+        print(f"  backfilled the development MFA secret onto {enrolled} existing account(s)")
     return created
 
 
@@ -303,7 +324,10 @@ async def main() -> None:
 
     print("WariVerse development seed complete")
     print(f"  users      +{users}")
-    print(f"  zones      +{len(zones)}")
+    # Not a "+" count: `seed_zones` returns every zone it resolved, created or
+    # found. Printing it as `+6` next to the genuine creation counts made a
+    # fully-seeded database look like it had just made six new zones.
+    print(f"  zones       {len(zones)} present")
     print(f"  gates      +{gates}")
     print(f"  cameras    +{cameras}  ({calibrated} calibrated)")
     print(f"  facilities +{facilities}")

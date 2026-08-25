@@ -13,8 +13,22 @@ import type { FormEvent } from 'react'
 import { useI18n } from '@/i18n'
 import { useAuth } from '@/state/auth'
 
+/**
+ * Seeded staff accounts, for the development quick-sign-in below.
+ *
+ * Security Officer is first because it is the one that opens every screen the
+ * console has without an MFA prompt. Administrator adds tripwire configuration
+ * and calibration; System Admin adds evidence redaction — the permission
+ * Administrator is deliberately denied.
+ */
+const DEV_ACCOUNTS: Array<{ phone: string; label: string; note: string }> = [
+  { phone: '9000000003', label: 'Security Officer', note: 'reviews breaches, dispatches units' },
+  { phone: '9000000002', label: 'Administrator', note: 'adds calibration, tripwires, config' },
+  { phone: '9000000001', label: 'System Admin', note: 'adds evidence redaction' },
+]
+
 export function SignIn() {
-  const { status, error, signIn, verifyMfa } = useAuth()
+  const { status, error, signIn, devSignIn, verifyMfa } = useAuth()
   const { t } = useI18n()
 
   const [phone, setPhone] = useState('')
@@ -96,6 +110,45 @@ export function SignIn() {
         <button type="submit" className="btn btn--primary btn--wide" disabled={busy}>
           {busy ? t('auth.working') : t('auth.signIn')}
         </button>
+
+        {/* Development quick sign-in.
+         *
+         * `import.meta.env.DEV` is a compile-time constant, so this whole block
+         * — and the `devSignIn` call inside it — is removed from a production
+         * bundle by dead-code elimination rather than merely hidden behind a
+         * runtime check. The server route is independently dead outside
+         * development, so both halves have to be wrong for this to be reachable.
+         */}
+        {import.meta.env.DEV && status !== 'mfa' && (
+          <div className="devlogin">
+            <p className="devlogin__title">
+              Development sign-in — no password, no TOTP. Needs
+              <code> DEV_LOGIN_ENABLED=true</code> in <code>.env</code>.
+            </p>
+            {DEV_ACCOUNTS.map((account) => (
+              <button
+                key={account.phone}
+                type="button"
+                className="devlogin__button"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true)
+                  try {
+                    await devSignIn(account.phone)
+                  } catch {
+                    // `useAuth` has already put a readable message in `error`.
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              >
+                <strong>{account.label}</strong>
+                <span className="mono">{account.phone}</span>
+                <em>{account.note}</em>
+              </button>
+            ))}
+          </div>
+        )}
       </form>
     </main>
   )

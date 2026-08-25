@@ -60,6 +60,17 @@ class PasswordLogin(ApiModel):
     _check_phone = field_validator("phone")(_validate_phone)
 
 
+class DevLogin(ApiModel):
+    """Development sign-in. Just the phone — no password, no TOTP.
+
+    The route that consumes this is dead unless `ENVIRONMENT=development` *and*
+    `DEV_LOGIN_ENABLED=true`, and the app refuses to boot in production with the
+    flag on. See `auth.dev_login`.
+    """
+
+    phone: str
+
+
 class MfaVerify(ApiModel):
     mfa_token: str
     code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")

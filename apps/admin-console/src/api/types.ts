@@ -280,6 +280,200 @@ export interface ReplayWindow {
   note_mr: string
 }
 
+// ---------------------------------------------------------------------------
+// incidents (Phase 5, Section 4/M4)
+// ---------------------------------------------------------------------------
+export type IncidentType =
+  | 'medical'
+  | 'missing_person'
+  | 'crowd_crush_risk'
+  | 'fire'
+  | 'structural'
+  | 'lost_item'
+  | 'facility_failure'
+  | 'security'
+  | 'other'
+
+export type IncidentSeverity = 'critical' | 'high' | 'normal' | 'low'
+
+export type IncidentStatus =
+  | 'reported'
+  | 'triaged'
+  | 'dispatched'
+  | 'on_scene'
+  | 'resolved'
+  | 'closed'
+
+export interface IncidentEvent {
+  id: string
+  action: string
+  note: string | null
+  actor_id: string | null
+  meta: Record<string, unknown>
+  created_at: string
+}
+
+export interface Incident {
+  id: string
+  reference: string
+  type: IncidentType
+  severity: IncidentSeverity
+  status: IncidentStatus
+  source: string
+  zone_id: string | null
+  zone_code: string | null
+  zone_name_mr: string | null
+  /** [lon, lat]; null when the report carried only a zone. */
+  location: [number, number] | null
+  description: string | null
+  has_audio_note: boolean
+  sla_due_at: string
+  sla_breached: boolean
+  /** Goes negative once the clock has run out — render "2m over", not "0". */
+  seconds_to_sla: number
+  first_response_at: string | null
+  assigned_responder_id: string | null
+  assigned_call_sign: string | null
+  /** Set when the report was queued offline; a 20-minute-old SOS is not new. */
+  client_reported_at: string | null
+  delayed_by_seconds: number | null
+  alert_id: string | null
+  resolved_at: string | null
+  closed_at: string | null
+  outcome_note: string | null
+  created_at: string
+  seconds_open: number
+  timeline: IncidentEvent[]
+}
+
+export interface Suggestion {
+  responder_id: string
+  call_sign: string
+  unit_type: string
+  /** Straight-line metres; null when either end has no known position. */
+  distance_m: number | null
+  /** Walking time through a crowd. A floor, not a forecast. */
+  eta_seconds: number | null
+  type_rank: number
+  caveats: string[]
+}
+
+export interface DispatchOptions {
+  incident_id: string
+  suggestions: Suggestion[]
+  /** So an empty suggestion list is never read as "no units exist". */
+  available_units: number
+  note: string
+  note_mr: string
+  generated_at: string
+}
+
+export interface Responder {
+  id: string
+  call_sign: string
+  unit_type: string
+  status: string
+  location: [number, number] | null
+  last_ping_at: string | null
+  seconds_since_ping: number | null
+  assigned_incident_id: string | null
+  assigned_incident_reference: string | null
+}
+
+export interface MissingPerson {
+  id: string
+  incident_id: string | null
+  incident_reference: string | null
+  name: string
+  age: number | null
+  description: string | null
+  has_photo: boolean
+  last_seen_zone_id: string | null
+  last_seen_zone_code: string | null
+  last_seen_at: string | null
+  language: string
+  status: string
+  reported_at: string
+  resolved_at: string | null
+  purge_after: string | null
+  open_for_seconds: number
+}
+
+// ---------------------------------------------------------------------------
+// breach ledger (Phase 6, Section 4/M5)
+// ---------------------------------------------------------------------------
+export type ReviewStatus = 'pending' | 'verified' | 'false_positive' | 'authorised'
+
+export interface ClipView {
+  actor_id: string
+  purpose: string
+  ip: string | null
+  accessed_at: string
+}
+
+export interface Breach {
+  id: string
+  /** Position in the hash chain. Gaps are themselves evidence. */
+  sequence: number
+  tripwire_id: string
+  tripwire_name: string | null
+  camera_id: string
+  gate_id: string | null
+  gate_code: string | null
+  gate_name_mr: string | null
+  occurred_at: string
+  direction: string
+  crossing_count: number
+  confidence: number
+  /** Whether a clip exists — never where it is. Fetching it is a separate act. */
+  has_clip: boolean
+  clip_sha256: string | null
+  /** "We checked and found no pass" vs "nobody checked" — different claims. */
+  pass_scan_checked: boolean
+  review_status: ReviewStatus
+  reviewed_by: string | null
+  review_reason: string | null
+  reviewed_at: string | null
+  redacted_at: string | null
+  redaction_reason: string | null
+  chain_hash: string
+  prev_hash: string
+  purge_after: string
+  created_at: string
+  clip_views: ClipView[]
+}
+
+export interface ChainBreak {
+  sequence: number
+  breach_id: string | null
+  problem: string
+  expected: string | null
+  found: string | null
+}
+
+export interface ChainReport {
+  events_checked: number
+  intact: boolean
+  breaks: ChainBreak[]
+  first_sequence: number | null
+  last_sequence: number | null
+  /** Worth writing down outside this database — see the server's note. */
+  head_hash: string | null
+  verified_at: string
+  note: string
+  note_mr: string
+}
+
+export interface ClipResponse {
+  breach_id: string
+  sequence: number
+  clip_uri: string
+  clip_sha256: string | null
+  notice: string
+  notice_mr: string
+  logged_at: string
+}
+
 export interface ConsoleConfig {
   alert_escalate_seconds: number
   alert_page_seconds: number
@@ -302,6 +496,9 @@ export type ServerEvent =
   | { type: 'alert.raised'; at: string; trace_id: string | null; data: WsAlertRef }
   | { type: 'alert.updated'; at: string; trace_id: string | null; data: WsAlertRef }
   | { type: 'camera.status_changed'; at: string; trace_id: string | null; data: WsCameraRef }
+  | { type: 'incident.raised'; at: string; trace_id: string | null; data: WsIncidentRef }
+  | { type: 'incident.updated'; at: string; trace_id: string | null; data: WsIncidentRef }
+  | { type: 'incident.sla_breached'; at: string; trace_id: string | null; data: WsIncidentRef }
 
 /** The socket's zone payload — `ZoneSnapshot.to_json()` on the server. */
 export interface WsZone {
@@ -339,4 +536,28 @@ export interface WsCameraRef {
   zone_id?: string
   status?: CameraStatus
   name?: string
+}
+
+/**
+ * The socket's incident payload.
+ *
+ * Note what is absent: the reporter. The command centre needs to know an
+ * incident exists, where, how bad and how long it has had — not who pressed
+ * the button. The server refuses to put it on the wire; this type refuses to
+ * have somewhere to put it.
+ */
+export interface WsIncidentRef {
+  incident_id: string
+  reference: string
+  type: IncidentType
+  severity: IncidentSeverity
+  status: IncidentStatus
+  zone_id: string | null
+  zone_code: string | null
+  zone_name_mr: string | null
+  sla_due_at: string
+  sla_breached: boolean
+  created_at: string
+  overdue_seconds?: number
+  missing_person_id?: string
 }

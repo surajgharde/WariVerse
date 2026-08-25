@@ -28,6 +28,8 @@ interface AuthState {
   /** True when the account is valid but the role cannot open this console. */
   forbidden: boolean
   signIn: (phone: string, password: string) => Promise<void>
+  /** Development only — see `auth.devLogin`. Absent from a production build. */
+  devSignIn: (phone: string) => Promise<void>
   verifyMfa: (code: string) => Promise<void>
   signOut: () => Promise<void>
 }
@@ -87,6 +89,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [adopt])
 
+  const devSignIn = useCallback(
+    async (phone: string) => {
+      setError(null)
+      try {
+        const result = await authApi.devLogin(phone)
+        tokens.set(result)
+        adopt(result.user)
+      } catch (exc) {
+        setError(describe(exc))
+        throw exc
+      }
+    },
+    [adopt],
+  )
+
   const verifyMfa = useCallback(
     async (code: string) => {
       if (!mfaToken) throw new Error('No MFA challenge in progress')
@@ -125,10 +142,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       error,
       forbidden: user !== null && !user.permissions.includes(CONSOLE_PERMISSION),
       signIn,
+      devSignIn,
       verifyMfa,
       signOut,
     }),
-    [status, user, error, signIn, verifyMfa, signOut],
+    [status, user, error, signIn, devSignIn, verifyMfa, signOut],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

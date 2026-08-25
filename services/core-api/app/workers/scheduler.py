@@ -35,6 +35,8 @@ SCHEDULE: list[tuple[str, Job, int]] = [
     ("alert_maintenance", jobs.scheduled_alert_maintenance, jobs.ALERT_MAINTENANCE_INTERVAL_SECONDS),
     ("incident_sla", jobs.scheduled_incident_sla, jobs.SLA_SWEEP_INTERVAL_SECONDS),
     ("photo_purge", jobs.scheduled_photo_purge, jobs.PHOTO_PURGE_INTERVAL_SECONDS),
+    ("breach_purge", jobs.scheduled_breach_purge, jobs.BREACH_PURGE_INTERVAL_SECONDS),
+    ("chain_verify", jobs.scheduled_chain_verification, jobs.CHAIN_VERIFY_INTERVAL_SECONDS),
 ]
 
 

@@ -27,6 +27,8 @@ const STRINGS = {
   'nav.cameras': { mr: 'कॅमेरे', en: 'Cameras' },
   'nav.replay': { mr: 'रीप्ले', en: 'Replay' },
   'nav.rules': { mr: 'नियम', en: 'Rules' },
+  'nav.incidents': { mr: 'घटना', en: 'Incidents' },
+  'nav.breaches': { mr: 'उल्लंघने', en: 'Ledger' },
 
   'auth.signIn': { mr: 'साइन इन', en: 'Sign in' },
   'auth.phone': { mr: 'फोन क्रमांक', en: 'Phone number' },
@@ -100,6 +102,93 @@ const STRINGS = {
   'cameras.empty': {
     mr: 'एकही कॅमेरा नोंदवलेला नाही. गर्दीची माहिती सिम्युलेशन किंवा हाताने येत आहे.',
     en: 'No cameras registered. Density is coming from simulation or manual entry.',
+  },
+
+  'incidents.title': { mr: 'घटना', en: 'Incidents' },
+  'incidents.empty': {
+    mr: 'सध्या कोणतीही घटना सुरू नाही.',
+    en: 'No open incidents.',
+  },
+  'incidents.slaLeft': { mr: 'उरलेला वेळ', en: 'SLA left' },
+  'incidents.slaOver': { mr: 'मुदत उलटून गेली', en: 'SLA over by' },
+  'incidents.responded': { mr: 'पथक पाठवले', en: 'Responded' },
+  'incidents.unit': { mr: 'पथक', en: 'Unit' },
+  'incidents.onScene': { mr: 'घटनास्थळी', en: 'On scene' },
+  'incidents.resolve': { mr: 'निकाली', en: 'Resolve' },
+  'incidents.close': { mr: 'बंद करा', en: 'Close' },
+  'incidents.reassign': { mr: 'दुसरे पथक', en: 'Reassign' },
+  'incidents.outcomePlaceholder': {
+    mr: 'प्रत्यक्षात काय केले?',
+    en: 'What was actually done?',
+  },
+  'incidents.queuedOffline': {
+    mr: 'ऑफलाइन रांगेत होते —',
+    en: 'Queued offline —',
+  },
+  'incidents.audioNote': { mr: 'ध्वनिमुद्रण जोडले आहे', en: 'Voice note attached' },
+
+  'dispatch.title': { mr: 'पथक पाठवा', en: 'Dispatch a unit' },
+  'dispatch.send': { mr: 'पाठवा', en: 'Dispatch' },
+  'dispatch.note': { mr: 'सूचना (ऐच्छिक)', en: 'Note (optional)' },
+  'dispatch.available': { mr: 'पथके उपलब्ध', en: 'units available' },
+  'dispatch.bestFit': { mr: 'सर्वात योग्य', en: 'best fit' },
+  'dispatch.noneNearby': {
+    mr: 'दोन किलोमीटरच्या आत कोणतेही पथक नाही. {n} पथके इतरत्र उपलब्ध आहेत — रेडिओवरून पाठवा आणि नंतर येथे नोंद करा.',
+    en: 'No unit within 2 km. {n} available elsewhere — dispatch by radio and log it here afterwards.',
+  },
+  'dispatch.noneAtAll': {
+    mr: 'एकही पथक उपलब्ध नाही. प्रत्येक पथक सध्या दुसऱ्या घटनेवर आहे.',
+    en: 'No unit is available. Every unit is currently on another incident.',
+  },
+
+  'breach.title': { mr: 'रांग-उल्लंघन नोंदवही', en: 'Queue breach ledger' },
+  'breach.empty': {
+    mr: 'कोणतीही उल्लंघनाची नोंद नाही.',
+    en: 'No breach records.',
+  },
+  'breach.claim': {
+    mr: 'या द्वारातून अनधिकृत प्रवेश नोंदवला गेला. कोणत्याही व्यक्तीची ओळख पटवली जात नाही.',
+    en: 'An unauthorised entry was recorded at this gate. No individual is identified.',
+  },
+  'breach.direction': { mr: 'दिशा', en: 'Direction' },
+  'breach.passChecked': { mr: 'पास तपासला — आढळला नाही', en: 'pass checked — none found' },
+  'breach.passNotChecked': { mr: 'पास तपासणी झाली नाही', en: 'no pass check was made' },
+  'breach.chainIntact': { mr: 'पुराव्याची साखळी अखंड आहे', en: 'Evidence chain verifies' },
+  'breach.chainBroken': {
+    mr: 'पुराव्याची साखळी तुटली आहे — तपास होईपर्यंत कारवाई करू नका',
+    en: 'Evidence chain does not verify — do not act until investigated',
+  },
+  'breach.chainBlocks': {
+    mr: 'साखळी तपासणीत टिकत नाही, त्यामुळे पुनरावलोकन बंद आहे.',
+    en: 'Review is disabled while the chain does not verify.',
+  },
+  'breach.recordsChecked': { mr: 'नोंदी तपासल्या', en: 'records checked' },
+  'breach.head': { mr: 'शेवटचा हॅश', en: 'head' },
+  'breach.recheck': { mr: 'पुन्हा तपासा', en: 'Re-check' },
+  'breach.status.pending': { mr: 'पुनरावलोकन बाकी', en: 'awaiting review' },
+  'breach.status.verified': { mr: 'पडताळले', en: 'verified' },
+  'breach.status.false_positive': { mr: 'चुकीची नोंद', en: 'false positive' },
+  'breach.status.authorised': { mr: 'परवानगी होती', en: 'authorised' },
+  'breach.mark.verified': { mr: 'पडताळले', en: 'Verified' },
+  'breach.mark.false_positive': { mr: 'चुकीची नोंद', en: 'False positive' },
+  'breach.mark.authorised': { mr: 'परवानगी होती', en: 'Authorised' },
+  'breach.reasonPlaceholder': {
+    mr: 'कारण (चुकीची नोंद / परवानगी यासाठी आवश्यक)',
+    en: 'Reason (required for false positive or authorised)',
+  },
+  'breach.reasonNeeded': {
+    mr: 'या निर्णयासाठी लेखी कारण आवश्यक आहे.',
+    en: 'This decision needs a written reason.',
+  },
+  'breach.reviewedAt': { mr: 'पुनरावलोकन', en: 'Reviewed' },
+  'breach.redacted': { mr: 'पुरावा काढून टाकला', en: 'Evidence removed' },
+  'breach.viewClip': { mr: 'चित्रफीत पाहा', en: 'View clip' },
+  'breach.openClip': { mr: 'उघडा', en: 'Open' },
+  'breach.viewedBy': { mr: 'पाहणी नोंदी', en: 'logged views' },
+  'breach.purpose': { mr: 'पाहण्याचे कारण', en: 'Purpose for viewing' },
+  'breach.clipPrompt': {
+    mr: 'पुरावा पाहण्यासाठी पुन्हा पासवर्ड द्या आणि कारण नोंदवा. प्रत्येक पाहणी नोंदवली जाते.',
+    en: 'Viewing evidence needs your password again and a stated purpose. Every view is logged.',
   },
 
   'conn.live': { mr: 'थेट जोडलेले', en: 'Live' },

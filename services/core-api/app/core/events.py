@@ -34,6 +34,13 @@ DENSITY_UPDATED = "density.updated"
 ALERT_RAISED = "alert.raised"
 ALERT_UPDATED = "alert.updated"
 CAMERA_STATUS_CHANGED = "camera.status_changed"
+
+# Phase 5 — incidents.  The payloads carry no reporter: the command centre needs
+# to know an incident exists, where, how bad and how long it has had, not who
+# pressed the button.  See `incident_service.event_payload`.
+INCIDENT_RAISED = "incident.raised"
+INCIDENT_UPDATED = "incident.updated"
+INCIDENT_SLA_BREACHED = "incident.sla_breached"
 INCIDENT_RAISED = "incident.raised"
 INCIDENT_UPDATED = "incident.updated"
 INCIDENT_DISPATCHED = "incident.dispatched"

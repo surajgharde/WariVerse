@@ -12,18 +12,18 @@ repeated here because it is the rule that gets broken under deadline pressure:
 dead pipeline produce the same zero, and a strip that renders them the same way
 is how an operator stands down during a surge.
 
-One KPI — breaches pending review — is `None` for a structural reason rather
-than a transient one: its table exists (the Phase 1 schema covers every module)
-but nothing writes to it until Phase 6.  Counting it would return a confident
-`0` that means "no intake exists", and an operator reading "0 breaches pending"
-reasonably concludes the field is quiet.  So it reports as unavailable, with a
-note that says which phase turns it on.
+Open incidents and breaches pending review were both placeholders returning
+`None` with a "not until Phase N" note, and both are now real counts. Note what
+did *not* change when they became live: each is still `None` when the count
+cannot be *read*, and `0` only when the thing being counted is genuinely empty.
+Turning a placeholder into a live number is the moment that distinction is
+easiest to lose, because `0` finally looks like a legitimate answer.
 
-Open incidents was the same until Phase 5 landed and is now a real count. Note
-what did *not* change when it did: it is still `None` when the count cannot be
-read, and it is `0` only when the board is genuinely empty. Turning a
-placeholder into a live number is the moment that distinction is easiest to
-lose, because `0` finally looks like a legitimate answer.
+The breach card carries one extra rule of its own. It counts events *awaiting
+review*, not breaches — an event is a detection and becomes a finding only when
+a human says so (Section 4/M5) — and it reports `breach` state outright when the
+ledger's hash chain fails to verify, whatever the backlog is. A pending count
+read off a ledger that does not verify is a number nobody should act on.
 """
 
 from __future__ import annotations
@@ -51,7 +51,14 @@ from app.schemas.command import (
     ReplayWindow,
     ReplayZoneState,
 )
-from app.services import alert_service, config_service, crowd_service, incident_service, pass_service
+from app.services import (
+    alert_service,
+    breach_service,
+    config_service,
+    crowd_service,
+    incident_service,
+    pass_service,
+)
 from app.services.crowd_service import ZoneSnapshot
 
 logger = get_logger(__name__)
@@ -468,6 +475,78 @@ def _kpi_cameras(cameras: list[Camera], *, at: datetime) -> Kpi:
     )
 
 
+async def _kpi_breaches(session: AsyncSession, *, at: datetime) -> Kpi:
+    """Breach events still waiting for a human (Section 4/M5).
+
+    This card counts *unreviewed* events, not breaches — the distinction is the
+    whole point of the module. An event is a detection; it becomes a finding
+    only when a Security Officer marks it verified. A KPI labelled "breaches"
+    that counted raw detections would put an AI output on the wall of a control
+    room as though it were a fact.
+
+    The chain check rides along in the detail. A pending count read off a ledger
+    that does not verify is a number nobody should act on, and an operator
+    should not have to visit a second screen to find that out.
+    """
+    try:
+        pending = await breach_service.pending_count(session)
+        report = await breach_service.verify_chain(session)
+    except Exception as exc:
+        logger.warning("kpi_breaches_failed", extra={"error": str(exc)})
+        return _unavailable(
+            "breaches_pending_review",
+            "Breaches pending review",
+            "पुनरावलोकन बाकी उल्लंघने",
+            "count",
+            "The breach ledger could not be read. This is not zero breaches — it is no answer.",
+            "उल्लंघन नोंदवही वाचता आली नाही. याचा अर्थ उल्लंघने नाहीत असा नाही — उत्तरच मिळालेले नाही.",
+        )
+
+    note = note_mr = None
+    state: KpiState = "ok"
+    if not report.intact:
+        # A broken chain outranks any backlog. The number of pending reviews is
+        # irrelevant if the ledger they came from cannot be trusted.
+        state = "breach"
+        note = (
+            f"The evidence chain does not verify ({len(report.breaks)} break(s)). "
+            "Do not act on this ledger until it has been investigated."
+        )
+        note_mr = (
+            f"पुराव्याची साखळी तपासणीत टिकत नाही ({len(report.breaks)} ठिकाणी). "
+            "तपास होईपर्यंत या नोंदवहीवर कारवाई करू नका."
+        )
+    elif pending >= 20:
+        state = "breach"
+        note = "The review backlog is large. Unreviewed events are detections, not findings."
+        note_mr = "पुनरावलोकनाचा अनुशेष मोठा आहे. न तपासलेल्या नोंदी म्हणजे निष्कर्ष नव्हेत."
+    elif pending > 0:
+        state = "watch"
+
+    return Kpi(
+        key="breaches_pending_review",
+        label="Breaches pending review",
+        label_mr="पुनरावलोकन बाकी उल्लंघने",
+        value=float(pending),
+        unit="count",
+        as_of=at,
+        age_seconds=0.0,
+        is_stale=False,
+        source="live",
+        confidence=1.0,
+        state=state,
+        detail={
+            "pending": pending,
+            "chain_intact": report.intact,
+            "chain_breaks": len(report.breaks),
+            "events_in_ledger": report.events_checked,
+            "chain_head": report.head_hash,
+        },
+        note=note,
+        note_mr=note_mr,
+    )
+
+
 async def kpi_strip(session: AsyncSession, *, at: datetime | None = None) -> KpiStrip:
     """The six numbers across the top of the console."""
     moment = at or now_utc()
@@ -506,14 +585,7 @@ async def kpi_strip(session: AsyncSession, *, at: datetime | None = None) -> Kpi
             at=moment,
         ),
         await _kpi_incidents(session, at=moment),
-        _unavailable(
-            "breaches_pending_review",
-            "Breaches pending review",
-            "पुनरावलोकन बाकी उल्लंघने",
-            "count",
-            "Breach detection is not live yet (Phase 6).",
-            "उल्लंघन शोध अद्याप सुरू झालेला नाही (टप्पा 6).",
-        ),
+        await _kpi_breaches(session, at=moment),
         _kpi_cameras(cameras, at=moment),
     ]
 
