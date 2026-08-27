@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.v1.routes import (
+    accessibility,
     admin,
     alerts,
     assistant,
@@ -19,8 +20,10 @@ from app.api.v1.routes import (
     command,
     crowd,
     forecast,
+    heritage,
     incidents,
     ingest,
+    lost_found,
     missing_persons,
     palkhi,
     pass_admin,
@@ -55,6 +58,13 @@ api_router.include_router(command.router)
 # Phase 5 — incidents, SOS, dispatch, missing persons
 api_router.include_router(incidents.router)
 api_router.include_router(missing_persons.router)
+# Track 1 item 2 — the property half of lost-and-found. Sits beside missing
+# persons rather than inside it: same desk, different rules.
+api_router.include_router(lost_found.router)
+# Track 1 item 4 — accessibility profiles, assistance requests, facility survey.
+api_router.include_router(accessibility.router)
+# Track 1 item 5 — the heritage archive. Public read, moderated write.
+api_router.include_router(heritage.router)
 
 # Phase 6 — breach ledger, review, evidence clips, tripwires
 api_router.include_router(breach.router)

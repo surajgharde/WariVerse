@@ -140,17 +140,51 @@ export async function cached<T>(
   }
 }
 
-export const auth = {
-  requestOtp: (phone: string) =>
-    request<{ sent: boolean; expires_in: number; debug_code?: string }>('/auth/otp/request', {
-      method: 'POST',
-      body: { phone },
-      anonymous: true,
-    }),
+/**
+ * Sign-in is a name and nothing else.
+ *
+ * There is no SMS gateway behind this deployment, so a one-time code is a step
+ * that never completes — the pilgrim waits for a message that is not coming.
+ * The server hashes the name into the same identity column a phone hash would
+ * occupy, so signing in again with the same name returns the same account and
+ * the same pass.
+ */
+/**
+ * Accessibility (Track 1, item 4).
+ *
+ * The profile is declared once and lives on the server, so it follows a pilgrim
+ * to a replacement phone — the whole point is not asking a 70-year-old to
+ * re-declare a disability. It is also cached locally, because the large-text
+ * and high-contrast preferences have to apply on the very first paint, before
+ * any network call has come back.
+ */
+export const accessibility = {
+  profile: () =>
+    request<{
+      needs: string[]
+      notes: string | null
+      large_text: boolean
+      high_contrast: boolean
+      priority_booking: boolean
+    }>('/accessibility/me'),
 
-  verifyOtp: (phone: string, code: string, name?: string) =>
+  declare: (body: {
+    needs: string[]
+    notes?: string | null
+    large_text: boolean
+    high_contrast: boolean
+  }) => request('/accessibility/me', { method: 'PUT', body }),
+
+  mine: () =>
+    request<Array<{ id: string; reference: string; needs: string[]; status: string }>>(
+      '/assistance/mine',
+    ),
+}
+
+export const auth = {
+  signIn: (name: string, language = 'mr') =>
     request<{ access_token: string; refresh_token: string; user: { id: string; name: string } }>(
-      '/auth/otp/verify',
-      { method: 'POST', body: { phone, code, name, language: 'mr' }, anonymous: true },
+      '/auth/name-login',
+      { method: 'POST', body: { name, language }, anonymous: true },
     ),
 }

@@ -17,6 +17,7 @@ from app.core.security import (
     create_mfa_pending_token,
     create_refresh_token,
     decode_token,
+    hash_name,
     hash_password,
     hash_phone,
     mask_phone,
@@ -153,6 +154,86 @@ async def login_with_otp(
         actor_role=user.role,
         target_type="user",
         target_id=user.id,
+        ip=ip,
+        user_agent=user_agent,
+    )
+    return pair
+
+
+async def get_or_create_pilgrim_by_name(session: AsyncSession, name: str, language: str) -> User:
+    """The name-only equivalent of `get_or_create_pilgrim`.
+
+    The identity key is `hash_name(name)`, stored in the same `phone_hash`
+    column — namespaced, so it cannot collide with a phone-derived hash — which
+    means everything already keyed on `phone_hash` (passes, the assistant's
+    lookups) keeps working untouched for a pilgrim who signed in this way.
+    """
+    identity = hash_name(name)
+    result = await session.execute(select(User).where(User.phone_hash == identity))
+    user = result.scalar_one_or_none()
+    if user:
+        if language and user.language != language:
+            user.language = language
+        return user
+
+    user = User(
+        phone=None,
+        phone_hash=identity,
+        name=name.strip() or "यात्रेकरू",  # "pilgrim"
+        role=Role.PILGRIM,
+        language=language or "mr",
+        is_active=True,
+    )
+    session.add(user)
+    await session.flush()
+    await audit_service.record(
+        session,
+        action=AuditAction.USER_CREATED,
+        actor_id=user.id,
+        actor_role=user.role,
+        target_type="user",
+        target_id=user.id,
+        meta={"role": Role.PILGRIM, "via": "name"},
+    )
+    logger.info("pilgrim_created", extra={"via": "name", "user_id": str(user.id)})
+    return user
+
+
+async def login_with_name(
+    session: AsyncSession,
+    *,
+    name: str,
+    language: str,
+    ip: str | None,
+    user_agent: str | None,
+) -> TokenPair:
+    """Sign a pilgrim in on their name alone, creating the account if new.
+
+    This is deliberately weak authentication: anyone who types the same name
+    lands on the same account.  It is here because there is no SMS gateway, and
+    the alternative is a pilgrim app nobody can get into at all.  It is confined
+    to the pilgrim role — the check below is the whole reason `login_with_name`
+    is not simply `login_with_otp` without the code.
+    """
+    user = await get_or_create_pilgrim_by_name(session, name, language)
+    _assert_usable(user)
+
+    if Role(user.role) in PASSWORD_LOGIN_ROLES:
+        raise AppError(
+            "FORBIDDEN",
+            message="Staff accounts must sign in with a password.",
+            message_mr="कर्मचारी खात्यांसाठी पासवर्डने साइन इन करावे लागते.",
+        )
+
+    pair = await issue_tokens(session, user)
+    await audit_service.record(
+        session,
+        action=AuditAction.LOGIN_SUCCESS,
+        actor_id=user.id,
+        actor_role=user.role,
+        target_type="user",
+        target_id=user.id,
+        meta={"method": "name"},
         ip=ip,
         user_agent=user_agent,
     )

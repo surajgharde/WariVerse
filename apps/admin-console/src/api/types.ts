@@ -400,6 +400,179 @@ export interface MissingPerson {
 }
 
 // ---------------------------------------------------------------------------
+// heritage archive (Track 1, item 5)
+// ---------------------------------------------------------------------------
+export type HeritageKind =
+  | 'abhang'
+  | 'ovi'
+  | 'bhajan'
+  | 'kirtan'
+  | 'story'
+  | 'ritual'
+  | 'place_lore'
+  | 'dindi_history'
+  | 'photo'
+
+export type HeritageStatus = 'pending' | 'published' | 'rejected'
+
+export interface HeritageItem {
+  id: string
+  kind: HeritageKind
+  title_mr: string
+  title_en: string | null
+  /** Marathi is the required side. An archive whose canonical text is a
+   *  translation has already lost the thing it set out to preserve. */
+  body_mr: string
+  body_en: string | null
+  attribution: string | null
+  source: string | null
+  era: string | null
+  media_uri: string | null
+  media_type: string | null
+  halt_town_id: string | null
+  dindi_id: string | null
+  tags: string[]
+  contributed_by_name: string | null
+  published_at: string | null
+  status: HeritageStatus
+  reviewed_at: string | null
+  review_note: string | null
+  created_at: string | null
+}
+
+// ---------------------------------------------------------------------------
+// accessibility & assistance (Track 1, item 4)
+// ---------------------------------------------------------------------------
+export type AssistanceNeed =
+  | 'wheelchair'
+  | 'walking_support'
+  | 'stretcher'
+  | 'vision'
+  | 'hearing'
+  | 'speech'
+  | 'cognitive'
+  | 'companion_required'
+  | 'step_free_route'
+  | 'oxygen'
+
+export type AssistanceStatus = 'open' | 'assigned' | 'met' | 'cancelled' | 'unmet'
+
+/**
+ * One ask for help.
+ *
+ * Note what the server does not send: the pilgrim's own notes about their body.
+ * A volunteer is told what to bring - `needs` - and the rest stays theirs.
+ */
+export interface AssistanceRequest {
+  id: string
+  reference: string
+  needs: AssistanceNeed[]
+  note: string | null
+  on_behalf_of: string | null
+  zone_id: string | null
+  zone_code: string | null
+  gate_id: string | null
+  facility_id: string | null
+  status: AssistanceStatus
+  requested_at: string
+  sla_due_at: string
+  assigned_at: string | null
+  resolved_at: string | null
+  outcome_note: string | null
+  language: string
+  /** Late means nobody was *assigned* in time, not that the help has not finished. */
+  sla_breached: boolean
+  waiting_seconds: number
+}
+
+// ---------------------------------------------------------------------------
+// lost & found property (Track 1, item 2)
+// ---------------------------------------------------------------------------
+export type LostFoundKind = 'lost' | 'found'
+
+export type ItemCategory =
+  | 'bag'
+  | 'phone'
+  | 'documents'
+  | 'money_purse'
+  | 'jewellery'
+  | 'footwear'
+  | 'clothing'
+  | 'medicine'
+  | 'walking_aid'
+  | 'religious_item'
+  | 'other'
+
+export type LostFoundStatus =
+  | 'open'
+  | 'matched'
+  | 'claimed'
+  | 'returned'
+  | 'closed_unresolved'
+  | 'expired'
+
+/**
+ * The coarse shape the server hands out for a counterpart record.
+ *
+ * It carries no identifying mark and no photo, on purpose — a volunteer
+ * comparing two rows does not need the mark to judge whether a blue bag found
+ * at Gate 3 might be the blue bag lost at Gate 3, and putting it here would
+ * place it on every desk screen in Pandharpur.
+ */
+export interface LostFoundPublic {
+  reference: string
+  category: ItemCategory
+  description: string
+  colour: string | null
+  zone_code: string | null
+  zone_name_mr: string | null
+  found_on: string
+  custody_desk: string | null
+  custody_desk_mr: string | null
+}
+
+export interface LostFoundMatch {
+  id: string
+  lost_item_id: string
+  found_item_id: string
+  score: number
+  is_strong: boolean
+  /** same_zone, hours_apart, shared_words, colour — the desk reads these. */
+  reasons: Record<string, unknown>
+  decision: 'pending' | 'accepted' | 'rejected'
+  suggested_at: string
+  decided_at: string | null
+  counterpart: LostFoundPublic | null
+}
+
+export interface LostFoundItem {
+  id: string
+  reference: string
+  kind: LostFoundKind
+  category: ItemCategory
+  description: string
+  colour: string | null
+  distinguishing_marks: string | null
+  has_photo: boolean
+  zone_id: string | null
+  zone_code: string | null
+  custody_facility_id: string | null
+  custody_desk: string | null
+  status: LostFoundStatus
+  matched_item_id: string | null
+  occurred_at: string
+  reported_at: string
+  resolved_at: string | null
+  purge_after: string | null
+  language: string
+  claimed_by_name: string | null
+  handed_over_at: string | null
+  handover_note: string | null
+  open_for_seconds: number
+  suggestions: LostFoundMatch[]
+}
+
+// ---------------------------------------------------------------------------
 // breach ledger (Phase 6, Section 4/M5)
 // ---------------------------------------------------------------------------
 export type ReviewStatus = 'pending' | 'verified' | 'false_positive' | 'authorised'

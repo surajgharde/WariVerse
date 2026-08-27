@@ -135,6 +135,45 @@ ERROR_CATALOG: dict[str, tuple[int, str, str]] = {
         "Closing an incident needs a note saying what was actually done.",
         "घटना बंद करताना प्रत्यक्षात काय केले याची नोंद आवश्यक आहे.",
     ),
+    # lost & found property (Track 1, item 2)
+    "LOSTFOUND_NOT_FOUND": (404, "No such lost or found record.", "अशी हरवलेली किंवा सापडलेली नोंद नाही."),
+    "LOSTFOUND_CLOSED": (
+        409,
+        "That record is already closed.",
+        "ती नोंद आधीच बंद केली आहे.",
+    ),
+    "LOSTFOUND_KIND_MISMATCH": (
+        400,
+        "A lost report can only be matched to a found item, and the other way round.",
+        "हरवलेल्या नोंदीची जोडणी फक्त सापडलेल्या वस्तूशीच होऊ शकते.",
+    ),
+    # Deliberately vague to the caller. A precise "the mark you gave does not
+    # match" tells somebody guessing exactly how close they got, and turns the
+    # verification step into an oracle they can iterate against.
+    "LOSTFOUND_CLAIM_UNVERIFIED": (
+        403,
+        "That does not match what the finder recorded. Please speak to the help desk.",
+        "सापडलेल्या वस्तूच्या नोंदीशी हे जुळत नाही. कृपया मदत कक्षाशी संपर्क साधा.",
+    ),
+    "LOSTFOUND_NOT_VERIFIABLE": (
+        409,
+        "This item has no recorded identifying mark, so it cannot be claimed this way. The help desk must hand it over in person.",
+        "या वस्तूची ओळख पटवणारी खूण नोंदवलेली नाही. मदत कक्षातूनच ती प्रत्यक्ष द्यावी लागेल.",
+    ),
+    # heritage archive (Track 1, item 5)
+    "HERITAGE_NOT_FOUND": (404, "No such archive entry.", "अशी नोंद संग्रहात नाही."),
+    "REVIEW_NOTE_REQUIRED": (
+        400,
+        "Declining a contribution needs a reason the contributor can read.",
+        "योगदान नाकारताना कारण देणे आवश्यक आहे.",
+    ),
+    # accessibility & assistance (Track 1, item 4)
+    "ASSISTANCE_NOT_FOUND": (404, "That help request does not exist.", "ती मदत विनंती अस्तित्वात नाही."),
+    "ASSISTANCE_CLOSED": (
+        409,
+        "That help request is already closed.",
+        "ती मदत विनंती आधीच बंद झाली आहे.",
+    ),
     "RESPONDER_NOT_FOUND": (404, "That responder unit does not exist.", "ते पथक नोंदवलेले नाही."),
     "RESPONDER_UNAVAILABLE": (
         409,

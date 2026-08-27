@@ -435,3 +435,73 @@ h2 {
     animation: none !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Accessibility preferences (Track 1, item 4)
+ *
+ * Applied as classes on <html> before the first paint by `lib/display.ts`.
+ * Scaling the root size rather than restating every rule works because the
+ * stylesheet is already sized in rem against the 18px base the spec sets.
+ * ------------------------------------------------------------------------ */
+html.a11y-large {
+  font-size: 22px;
+}
+
+/* Stronger contrast, not a different palette. The saffron stays — a pilgrim who
+ * needs contrast should still recognise the app they were shown at the gate. */
+html.a11y-contrast body {
+  background: #ffffff;
+  color: #000000;
+}
+
+html.a11y-contrast .muted {
+  /* The dim grey is the first thing to fail in sunlight; give it real weight. */
+  color: #2b2b2b;
+}
+
+html.a11y-contrast .card {
+  border: 2px solid #000000;
+}
+
+html.a11y-contrast .btn {
+  border: 2px solid #000000;
+}
+
+/* A checkbox row. 48px is the touch floor for the whole row, not just the box —
+ * a tired hand aims at the label, and a 20px checkbox in a 300px row is a
+ * target most people miss at least once. */
+.field--check {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+}
+
+.field--check input {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+}
+
+/* ---------------------------------------------------------------------------
+ * Heritage archive (Track 1, item 5)
+ *
+ * Verse, set to be read rather than skimmed. `pre-wrap` because an abhang's
+ * line breaks are part of it - reflowing the text would be the digital
+ * equivalent of retyping it as a paragraph.
+ * ------------------------------------------------------------------------ */
+.heritage {
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  padding-top: 8px;
+  margin-top: 8px;
+}
+
+.heritage__title {
+  text-align: left;
+  width: 100%;
+}
+
+.heritage__body {
+  white-space: pre-wrap;
+  line-height: 1.7;
+}

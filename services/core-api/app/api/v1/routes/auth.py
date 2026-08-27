@@ -1,5 +1,6 @@
 """Auth endpoints (Section 9).
 
+    POST /auth/name-login    (pilgrims — no SMS gateway needed)
     POST /auth/otp/request   POST /auth/otp/verify
     POST /auth/login         POST /auth/mfa/verify
     POST /auth/refresh       POST /auth/logout
@@ -23,6 +24,7 @@ from app.schemas.auth import (
     MfaChallengeResponse,
     MfaEnrolResponse,
     MfaVerify,
+    NameLogin,
     OtpRequest,
     OtpRequestResponse,
     OtpVerify,
@@ -80,6 +82,34 @@ async def verify_otp(
     pair = await auth_service.login_with_otp(
         session,
         phone=payload.phone,
+        name=payload.name,
+        language=payload.language,
+        ip=client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
+    return _token_response(pair)
+
+
+@router.post("/name-login", response_model=TokenResponse)
+async def name_login(
+    payload: NameLogin, request: Request, session: AsyncSession = Depends(get_session)
+) -> TokenResponse:
+    """Sign a pilgrim in with their name and nothing else.
+
+    The OTP pair above needs an SMS gateway to be of any use.  Without one a
+    pilgrim cannot sign in at all, so this is the pilgrim app's sign-in: type a
+    name, get tokens.  Typing the same name again returns to the same account
+    and the same passes, because the name is hashed into the identity column a
+    phone hash would otherwise occupy.
+
+    It authenticates nothing — two people with the same name share an account —
+    and it is restricted to the pilgrim role, so no staff privilege is reachable
+    through it.  `/auth/otp/*` is left in place for the day a gateway key
+    arrives.
+    """
+    pair = await auth_service.login_with_name(
+        session,
         name=payload.name,
         language=payload.language,
         ip=client_ip(request),

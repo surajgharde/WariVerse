@@ -53,6 +53,31 @@ class Permission(StrEnum):
     INCIDENT_DISPATCH = "incident:dispatch"
     SOS_RAISE = "sos:raise"
 
+    # lost & found property (Track 1, item 2)
+    # Reporting a loss is a pilgrim's; registering something handed in, seeing
+    # the register, and handing an item over are a desk volunteer's. The split
+    # is the whole fraud model: anyone may say "I lost a bag", and only a named
+    # volunteer may say "and here it is".
+    LOSTFOUND_REPORT = "lostfound:report"
+    LOSTFOUND_VIEW = "lostfound:view"
+    LOSTFOUND_MANAGE = "lostfound:manage"
+
+    # accessibility & assistance (Track 1, item 4)
+    # Asking for help is a pilgrim's. Seeing the board and answering it is a
+    # volunteer's. Nobody has a permission to *read profiles* — that endpoint
+    # does not exist, because a declared disability is health data and a list of
+    # them is the list an opportunist would want.
+    ASSISTANCE_REQUEST = "assistance:request"
+    ASSISTANCE_VIEW = "assistance:view"
+    ASSISTANCE_MANAGE = "assistance:manage"
+
+    # heritage archive (Track 1, item 5)
+    # Anyone signed in may contribute; only an Administrator may publish. The
+    # gate is the feature: an archive of religious tradition that anybody can
+    # write into is where a plausible invention becomes a citation.
+    HERITAGE_CONTRIBUTE = "heritage:contribute"
+    HERITAGE_MODERATE = "heritage:moderate"
+
     # breach audit — Security Officer and Administrator only (Section 4/M5)
     BREACH_VIEW = "breach:view"
     BREACH_REVIEW = "breach:review"
@@ -90,6 +115,9 @@ _PILGRIM: frozenset[Permission] = frozenset(
         Permission.PASS_CANCEL_OWN,
         Permission.CROWD_VIEW_PUBLIC,
         Permission.INCIDENT_REPORT,
+        Permission.LOSTFOUND_REPORT,
+        Permission.ASSISTANCE_REQUEST,
+        Permission.HERITAGE_CONTRIBUTE,
         Permission.SOS_RAISE,
         Permission.DINDI_VIEW,
         Permission.ASSISTANT_USE,
@@ -102,6 +130,10 @@ _VOLUNTEER: frozenset[Permission] = _PILGRIM | {
     Permission.ALERT_VIEW,
     Permission.INCIDENT_VIEW,
     Permission.INCIDENT_UPDATE_LOW,
+    Permission.LOSTFOUND_VIEW,
+    Permission.LOSTFOUND_MANAGE,
+    Permission.ASSISTANCE_VIEW,
+    Permission.ASSISTANCE_MANAGE,
     Permission.DINDI_PING,
     Permission.HALT_READINESS_UPDATE,
 }
@@ -129,6 +161,7 @@ _ADMINISTRATOR: frozenset[Permission] = _SECURITY_OFFICER | {
     Permission.ANALYTICS_EXPORT,
     Permission.AUDIT_VIEW,
     Permission.DINDI_MANAGE,
+    Permission.HERITAGE_MODERATE,
     Permission.ASSISTANT_REVIEW,
     Permission.CAMERA_MANAGE,
     Permission.ZONE_MANAGE,

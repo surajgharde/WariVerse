@@ -27,7 +27,7 @@
  * only get one request through before the signal goes again.
  */
 
-export type QueuedKind = 'sos' | 'missing_person' | 'crowd_report'
+export type QueuedKind = 'sos' | 'missing_person' | 'crowd_report' | 'lost_item' | 'assistance'
 
 export interface QueuedAction {
   /** Local id. Not a server id — this thing has never been to a server. */
@@ -47,6 +47,13 @@ export const ENDPOINTS: Record<QueuedKind, string> = {
   sos: '/sos',
   missing_person: '/missing-persons',
   crowd_report: '/incidents',
+  // Queued like everything else: somebody realising their bag is gone is very
+  // often standing somewhere with no signal, and a loss report is worth more
+  // the earlier its `occurred_at` is — which the queue preserves.
+  lost_item: '/lost-found/lost',
+  // A request for a wheelchair or an arm to lean on. Queued like the rest, and
+  // its SLA clock starts from `client_reported_at` — see `bodyToSend`.
+  assistance: '/assistance',
 }
 
 /**
@@ -132,6 +139,19 @@ export function dueNow(actions: QueuedAction[], now: Date = new Date()): QueuedA
 export function bodyToSend(action: QueuedAction): Record<string, unknown> {
   if (action.kind === 'sos') {
     return { ...action.body, client_reported_at: action.queuedAt }
+  }
+  if (action.kind === 'assistance') {
+    // Somebody stuck at a step in a dead spot has been waiting since they
+    // pressed, not since the signal came back. The server starts the 15-minute
+    // promise from this, exactly as it does for an SOS.
+    return { ...action.body, client_reported_at: action.queuedAt }
+  }
+  if (action.kind === 'lost_item' && !action.body.occurred_at) {
+    // Matching scores on when the thing was lost, not when the form reached the
+    // server. A bag reported from a dead zone and synced two hours later must
+    // not push its own `occurred_at` two hours past the moment it was dropped —
+    // that is exactly how a scorer starts suggesting items found before the loss.
+    return { ...action.body, occurred_at: action.queuedAt }
   }
   return action.body
 }

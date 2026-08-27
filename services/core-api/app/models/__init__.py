@@ -4,6 +4,13 @@ Imported as one module so Alembic's autogenerate and `Base.metadata` see every
 table without hunting for imports.
 """
 
+from app.models.accessibility import (
+    ASSISTANCE_SLA_MINUTES,
+    AccessibilityProfile,
+    AssistanceNeed,
+    AssistanceRequest,
+    RequestStatus,
+)
 from app.models.assistant import AssistantTurn, TurnOutcome
 from app.models.audit import DEFAULT_CONFIG, AuditLog, SystemConfig
 from app.models.base import Base, TimestampMixin
@@ -20,6 +27,7 @@ from app.models.crowd import (
     classify_density,
 )
 from app.models.geo import Camera, Facility, Gate, Tripwire, Zone
+from app.models.heritage import HeritageItem, HeritageKind, ReviewState
 from app.models.incidents import (
     SLA_MINUTES,
     Incident,
@@ -29,6 +37,13 @@ from app.models.incidents import (
     IncidentType,
     MissingPerson,
     Responder,
+)
+from app.models.lostfound import (
+    ItemCategory,
+    LostFoundItem,
+    LostFoundKind,
+    LostFoundMatch,
+    LostFoundStatus,
 )
 from app.models.palkhi import (
     Dindi,
@@ -51,14 +66,18 @@ from app.models.passes import (
 from app.models.user import ContactSecret, User
 
 __all__ = [
+    "ASSISTANCE_SLA_MINUTES",
     "DEFAULT_CONFIG",
     "DENSITY_THRESHOLDS",
     "FORECAST_HORIZONS",
     "MAX_GROUP_SIZE",
     "SLA_MINUTES",
+    "AccessibilityProfile",
     "Alert",
     "AlertSeverity",
     "AlertStatus",
+    "AssistanceNeed",
+    "AssistanceRequest",
     "AssistantTurn",
     "AuditLog",
     "Base",
@@ -75,6 +94,8 @@ __all__ = [
     "Facility",
     "Forecast",
     "Gate",
+    "HeritageItem",
+    "HeritageKind",
     "HaltReadiness",
     "HaltTown",
     "Incident",
@@ -82,12 +103,19 @@ __all__ = [
     "IncidentSeverity",
     "IncidentStatus",
     "IncidentType",
+    "ItemCategory",
+    "LostFoundItem",
+    "LostFoundKind",
+    "LostFoundMatch",
+    "LostFoundStatus",
     "MissingPerson",
     "Pass",
     "PassMember",
     "PassNotification",
     "PassStatus",
     "PurgeLog",
+    "RequestStatus",
+    "ReviewState",
     "Responder",
     "ReviewStatus",
     "Route",

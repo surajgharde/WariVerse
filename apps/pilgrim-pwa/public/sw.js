@@ -7,9 +7,18 @@
  *
  * Two caching strategies, chosen per resource by what it costs to be wrong:
  *
- * **App shell — cache first.** HTML, JS, CSS. These change when we deploy, not
- * during a Wari, and a pilgrim opening the app at a gate should get a screen
- * instantly rather than a network wait.
+ * **Hashed assets — cache first.** `/assets/index-<hash>.js` and friends. The
+ * hash is the version, so a cached copy can never be the wrong one, and a
+ * pilgrim opening the app at a gate gets a screen instantly.
+ *
+ * **HTML — network first, cache fallback.** The document is the one file whose
+ * URL does *not* change between deploys, and it is the file that names the
+ * hashed bundle. Serving it cache-first bricks the app on the next deploy: the
+ * old HTML asks for a bundle hash that no longer exists on the server, the
+ * request 404s, and the pilgrim is left staring at the boot placeholder with no
+ * way out but clearing site data. Network first costs one round trip on a cold
+ * open and takes that failure mode off the table; offline still falls back to
+ * the cached shell.
  *
  * **API reads — network first, cache fallback.** A live answer is better when
  * one exists. When it does not, a cached answer with its age shown beats a
@@ -22,7 +31,10 @@
  * are visible and cancellable, never through opaque background replay.
  */
 
-const VERSION = 'v1'
+// Bump this when the caching *policy* changes; `activate` deletes every cache
+// that is not on the current names, which is what evicts a shell cached under
+// the old rules.
+const VERSION = 'v2'
 const SHELL_CACHE = `wariverse-shell-${VERSION}`
 const API_CACHE = `wariverse-api-${VERSION}`
 
@@ -88,8 +100,36 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
+  // The document names the hashed bundle, so it must never outlive a deploy.
+  if (request.mode === 'navigate' || request.destination === 'document') {
+    event.respondWith(shellNetworkFirst(request))
+    return
+  }
+
   event.respondWith(cacheFirst(request))
 })
+
+/**
+ * HTML: try the server, fall back to the last good shell.
+ *
+ * The fallback is `/index.html` rather than the request URL because the app has
+ * no router — every path is the same document — and because a deep link the
+ * pilgrim has never opened online would otherwise have no cache entry at all.
+ */
+async function shellNetworkFirst(request) {
+  try {
+    const response = await fetch(request)
+    if (response.ok) {
+      const cache = await caches.open(SHELL_CACHE)
+      void cache.put('/index.html', response.clone())
+    }
+    return response
+  } catch {
+    const shell = (await caches.match(request)) || (await caches.match('/index.html'))
+    if (shell) return shell
+    throw new Error('offline and no shell cached')
+  }
+}
 
 async function cacheFirst(request) {
   const cached = await caches.match(request)
@@ -103,12 +143,6 @@ async function cacheFirst(request) {
     }
     return response
   } catch {
-    // A navigation that cannot be served is the one case worth a fallback:
-    // hand back the shell so the app boots and can explain itself.
-    if (request.mode === 'navigate') {
-      const shell = await caches.match('/index.html')
-      if (shell) return shell
-    }
     throw new Error('offline and not cached')
   }
 }

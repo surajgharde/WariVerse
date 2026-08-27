@@ -120,4 +120,16 @@ class Facility(Base, TimestampMixin):
     capacity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     notes_mr: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # What this facility offers a pilgrim who cannot climb, see or hear well
+    # (Track 1, item 4). A JSONB bag of booleans — `step_free`, `ramp`,
+    # `accessible_toilet`, `seating`, `staffed` — rather than five columns,
+    # because the list grows as surveys come in from the field and each addition
+    # would otherwise be a migration.
+    #
+    # An empty object means *unsurveyed*, not inaccessible. The pilgrim UI is
+    # required to say "not known" for those rather than render them as a
+    # facility that will turn somebody away at the step — the same rule the
+    # crowd map follows for a zone with no reading.
+    accessibility: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
     __table_args__ = (Index("ix_facilities_location", "location", postgresql_using="gist"),)

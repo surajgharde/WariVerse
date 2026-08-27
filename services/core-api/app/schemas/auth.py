@@ -53,6 +53,32 @@ class OtpVerify(ApiModel):
         return value if value in _LANGS else "mr"
 
 
+class NameLogin(ApiModel):
+    """Pilgrim sign-in with nothing but a name.
+
+    There is no SMS gateway wired up, so an OTP a pilgrim never receives is a
+    door that does not open.  The name is HMACed into the same identity column a
+    phone hash would go in, which is what makes the second sign-in land on the
+    first sign-in's account and its passes.
+    """
+
+    name: str = Field(min_length=1, max_length=120)
+    language: str = "mr"
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("Enter your name")
+        return value
+
+    @field_validator("language")
+    @classmethod
+    def _check_language(cls, value: str) -> str:
+        return value if value in _LANGS else "mr"
+
+
 class PasswordLogin(ApiModel):
     phone: str
     password: str = Field(min_length=8, max_length=200)

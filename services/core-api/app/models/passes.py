@@ -56,6 +56,17 @@ class Slot(Base, TimestampMixin):
     walkin_reserve: Mapped[int] = mapped_column(Integer, nullable=False)
     walkin_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Seats an ordinary booking cannot take (Track 1, item 4).
+    #
+    # Same shape as the walk-in reserve and the same reasoning one step further:
+    # a pilgrim who cannot stand in a corridor for four hours should not be
+    # competing for the same seat as one who can. Held back from the general
+    # pool, released only to a booker with a declared mobility need, and
+    # returned to nobody if unused — an empty reserved seat is a smaller failure
+    # than an elderly pilgrim sent home.
+    assisted_reserve: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    assisted_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
     status: Mapped[str] = mapped_column(String(12), nullable=False, default=SlotStatus.OPEN, index=True)
     gate_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("gates.id", ondelete="SET NULL"), nullable=True

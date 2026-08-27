@@ -10,9 +10,10 @@
 import { useCallback, useEffect, useState } from 'preact/hooks'
 
 import type { Shell, Tab } from './App'
-import { auth, cached, request, tokens } from './lib/api'
+import { accessibility, auth, cached, request, tokens } from './lib/api'
 import { CACHE_KEYS, passStore, queueStore } from './lib/db'
 import type { StoredPass } from './lib/db'
+import { applyDisplayPreferences } from './lib/display'
 import { formatAge, levelToShow, unknownAdvice } from './lib/freshness'
 import { buildQrPayload, envelopeFromPayload, rollingCode, secondsUntilRotation } from './lib/totp'
 import type { PassIssued, PassView, ZonePublic } from './lib/types'
@@ -23,26 +24,30 @@ import { qrSvg } from './lib/qr'
 // ---------------------------------------------------------------------------
 // sign in
 // ---------------------------------------------------------------------------
+/**
+ * Sign in with a name.
+ *
+ * One field, one tap, no waiting for a message that never arrives — there is no
+ * SMS gateway behind this deployment, so a one-time code was a step a pilgrim
+ * could not finish. Typing the same name again comes back to the same account.
+ */
 export function SignIn({ lang, onSignedIn }: { lang: Lang; onSignedIn: () => void }) {
-  const [phone, setPhone] = useState('')
-  const [code, setCode] = useState('')
   const [name, setName] = useState('')
-  const [stage, setStage] = useState<'phone' | 'code'>('phone')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const send = async () => {
+    const typed = name.trim()
+    if (!typed) {
+      setError(t('auth.nameNeeded', lang))
+      return
+    }
     setBusy(true)
     setError(null)
     try {
-      if (stage === 'phone') {
-        await auth.requestOtp(phone)
-        setStage('code')
-      } else {
-        const result = await auth.verifyOtp(phone, code, name || undefined)
-        tokens.set(result)
-        onSignedIn()
-      }
+      const result = await auth.signIn(typed, lang)
+      tokens.set(result)
+      onSignedIn()
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : 'Could not reach the server.')
     } finally {
@@ -54,40 +59,25 @@ export function SignIn({ lang, onSignedIn }: { lang: Lang; onSignedIn: () => voi
     <main class="screen screen--centred">
       <h1 class="title">{t('app.name', lang)}</h1>
 
-      {stage === 'phone' ? (
-        <label class="field">
-          <span>{t('auth.phone', lang)}</span>
-          <input
-            type="tel"
-            inputMode="numeric"
-            value={phone}
-            onInput={(e) => setPhone((e.target as HTMLInputElement).value)}
-            autocomplete="tel"
-          />
-        </label>
-      ) : (
-        <>
-          <label class="field">
-            <span>{t('auth.code', lang)}</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={code}
-              onInput={(e) => setCode((e.target as HTMLInputElement).value)}
-              autocomplete="one-time-code"
-            />
-          </label>
-          <label class="field">
-            <span>{t('auth.yourName', lang)}</span>
-            <input value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
-          </label>
-        </>
-      )}
+      <label class="field">
+        <span>{t('auth.yourName', lang)}</span>
+        <input
+          type="text"
+          value={name}
+          onInput={(e) => setName((e.target as HTMLInputElement).value)}
+          onKeyDown={(e) => {
+            if ((e as KeyboardEvent).key === 'Enter') void send()
+          }}
+          autocomplete="name"
+          enterkeyhint="go"
+        />
+      </label>
+      <p class="muted">{t('auth.nameHint', lang)}</p>
 
       {error && <p class="error">{error}</p>}
 
       <button type="button" class="btn btn--primary" onClick={() => void send()} disabled={busy}>
-        {stage === 'phone' ? t('auth.signIn', lang) : t('auth.verify', lang)}
+        {t('auth.signIn', lang)}
       </button>
     </main>
   )
@@ -564,6 +554,181 @@ export function AlertsScreen({ shell }: { shell: Shell }) {
           ))}
         </dl>
       </section>
+
+      <HeritageArchive shell={shell} />
+    </>
+  )
+}
+
+/**
+ * The Wari heritage archive (Track 1, item 5).
+ *
+ * Sits under the ritual timings, because to a Warkari it is the same kind of
+ * thing: what is sung, when, and why here. Read-only and cached hard - an
+ * abhang from the 17th century does not go stale, and the pilgrim most likely
+ * to sit and read one is on a bus with no signal.
+ *
+ * Contributing is a separate, quieter action, and it is not a "post" button.
+ * What a pilgrim submits goes to a moderator, and the copy says so: an archive
+ * that implies instant publication and then silently holds things for review is
+ * worse than one that is honest about the wait.
+ */
+const HERITAGE_KINDS = ['abhang', 'ovi', 'story', 'ritual', 'place_lore'] as const
+
+type HeritageKind = (typeof HERITAGE_KINDS)[number]
+
+interface HeritageEntry {
+  id: string
+  kind: HeritageKind
+  title_mr: string
+  title_en: string | null
+  body_mr: string
+  attribution: string | null
+  source: string | null
+  era: string | null
+  contributed_by_name: string | null
+}
+
+function HeritageArchive({ shell }: { shell: Shell }) {
+  const { lang } = shell
+  const [entries, setEntries] = useState<HeritageEntry[] | null>(null)
+  const [open, setOpen] = useState<string | null>(null)
+  const [contributing, setContributing] = useState(false)
+
+  useEffect(() => {
+    void cached<{ items: HeritageEntry[] }>(CACHE_KEYS.heritage, '/heritage?limit=50', {
+      anonymous: true,
+    }).then((result) => setEntries(result ? result.value.items : []))
+  }, [])
+
+  return (
+    <section class="card">
+      <h2>{t('her.title', lang)}</h2>
+
+      {entries === null && <p class="muted">{t('common.loading', lang)}</p>}
+      {entries !== null && entries.length === 0 && <p class="muted">{t('her.empty', lang)}</p>}
+
+      {entries?.map((entry) => (
+        <div key={entry.id} class="heritage">
+          <button
+            type="button"
+            class="btn btn--quiet heritage__title"
+            onClick={() => setOpen(open === entry.id ? null : entry.id)}
+          >
+            {s(entry.title_en ?? entry.title_mr, entry.title_mr, lang)}
+            {entry.attribution && <span class="muted"> - {entry.attribution}</span>}
+          </button>
+
+          {open === entry.id && (
+            <>
+              {/* Marathi always, whatever the interface language is set to. The
+                  text is the artefact; showing a translation in its place would
+                  be preserving the wrong thing. */}
+              <p class="heritage__body">{entry.body_mr}</p>
+              <p class="muted small">
+                {[entry.era, entry.source, entry.contributed_by_name].filter(Boolean).join(' - ')}
+              </p>
+            </>
+          )}
+        </div>
+      ))}
+
+      {contributing ? (
+        <HeritageContribute onClose={() => setContributing(false)} lang={lang} />
+      ) : (
+        <button type="button" class="btn" onClick={() => setContributing(true)}>
+          {t('her.contribute', lang)}
+        </button>
+      )}
+    </section>
+  )
+}
+
+function HeritageContribute({ lang, onClose }: { lang: Lang; onClose: () => void }) {
+  const [kind, setKind] = useState<HeritageKind>('story')
+  const [title, setTitle] = useState('')
+  const [body, setBody] = useState('')
+  const [credit, setCredit] = useState('')
+  const [done, setDone] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async () => {
+    try {
+      await request('/heritage', {
+        method: 'POST',
+        body: {
+          kind,
+          title_mr: title.trim(),
+          body_mr: body.trim(),
+          contributed_by_name: credit.trim() || null,
+        },
+      })
+      setDone(true)
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : 'Could not send it.')
+    }
+  }
+
+  if (done) {
+    return (
+      <>
+        <p>{t('her.submitted', lang)}</p>
+        <button type="button" class="btn btn--quiet" onClick={onClose}>
+          {t('common.close', lang)}
+        </button>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <label class="field">
+        <span>{t('her.what', lang)}</span>
+        <select
+          value={kind}
+          onChange={(e) => setKind((e.target as HTMLSelectElement).value as HeritageKind)}
+        >
+          {HERITAGE_KINDS.map((key) => (
+            <option key={key} value={key}>
+              {t(`her.kind.${key}`, lang)}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label class="field">
+        <span>{t('her.titleField', lang)}</span>
+        <input value={title} onInput={(e) => setTitle((e.target as HTMLInputElement).value)} />
+      </label>
+
+      <label class="field">
+        <span>{t('her.bodyField', lang)}</span>
+        <textarea
+          rows={4}
+          value={body}
+          onInput={(e) => setBody((e.target as HTMLTextAreaElement).value)}
+        />
+      </label>
+
+      <label class="field">
+        <span>{t('her.credit', lang)}</span>
+        <input value={credit} onInput={(e) => setCredit((e.target as HTMLInputElement).value)} />
+      </label>
+      <p class="muted">{t('her.creditWhy', lang)}</p>
+
+      {error && <p class="error">{error}</p>}
+
+      <button
+        type="button"
+        class="btn btn--primary"
+        onClick={() => void submit()}
+        disabled={title.trim().length < 1 || body.trim().length < 2}
+      >
+        {t('help.submit', lang)}
+      </button>
+      <button type="button" class="btn btn--quiet" onClick={onClose}>
+        {t('common.close', lang)}
+      </button>
     </>
   )
 }
@@ -591,7 +756,11 @@ export function HelpScreen({ shell, onToggleLang }: { shell: Shell; onToggleLang
         ))}
       </section>
 
+      <AccessibilityCard shell={shell} />
+
       <MissingPersonForm shell={shell} />
+
+      <LostAndFound shell={shell} />
 
       <section class="card">
         <button type="button" class="btn" onClick={onToggleLang}>
@@ -599,6 +768,384 @@ export function HelpScreen({ shell, onToggleLang }: { shell: Shell; onToggleLang
         </button>
       </section>
     </>
+  )
+}
+
+/**
+ * Accessibility (Track 1, item 4).
+ *
+ * Two things in one card, because to the pilgrim they are one thing:
+ *
+ * **"I need help now"** is the primary action and sits first. It is one tap and
+ * it is queued, exactly like the SOS — somebody stuck at a step is very often
+ * standing in a dead spot, and the SLA clock the server starts is the moment
+ * they pressed, not the moment the signal came back.
+ *
+ * **"Set what I need"** is the standing declaration. Filling it in makes the
+ * button above send the right needs without asking again, and — the part worth
+ * saying out loud in the UI — opens the reserved darshan slots. A pilgrim who
+ * cannot see why they would fill in a form about their disability will not fill
+ * it in, so the card says what it buys them.
+ */
+const ACC_NEEDS = [
+  'wheelchair',
+  'walking_support',
+  'step_free_route',
+  'vision',
+  'hearing',
+  'speech',
+  'cognitive',
+  'companion_required',
+  'oxygen',
+  'stretcher',
+] as const
+
+type AccNeed = (typeof ACC_NEEDS)[number]
+
+function AccessibilityCard({ shell }: { shell: Shell }) {
+  const { lang } = shell
+  const [open, setOpen] = useState(false)
+  const [needs, setNeeds] = useState<AccNeed[]>([])
+  const [largeText, setLargeText] = useState(false)
+  const [highContrast, setHighContrast] = useState(false)
+  const [priority, setPriority] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [asked, setAsked] = useState<'no' | 'sent' | 'queued'>('no')
+
+  useEffect(() => {
+    void accessibility
+      .profile()
+      .then((profile) => {
+        setNeeds(profile.needs.filter((n): n is AccNeed => (ACC_NEEDS as readonly string[]).includes(n)))
+        setLargeText(profile.large_text)
+        setHighContrast(profile.high_contrast)
+        setPriority(profile.priority_booking)
+      })
+      .catch(() => {
+        // Offline, or not signed in yet. The card still works — the local
+        // preferences below are applied from localStorage on boot regardless.
+      })
+  }, [])
+
+  const toggle = (need: AccNeed) =>
+    setNeeds((current) =>
+      current.includes(need) ? current.filter((n) => n !== need) : [...current, need],
+    )
+
+  const save = useCallback(async () => {
+    applyDisplayPreferences({ largeText, highContrast })
+    try {
+      await accessibility.declare({ needs, large_text: largeText, high_contrast: highContrast })
+      const profile = await accessibility.profile()
+      setPriority(profile.priority_booking)
+    } catch {
+      // The display preferences are already applied and stored locally; the
+      // server copy can wait for a signal.
+    }
+    setSaved(true)
+  }, [needs, largeText, highContrast])
+
+  const askForHelp = useCallback(async () => {
+    // Queued first, network second — the same order as the SOS button, and for
+    // the same reason: the request must survive the app being closed.
+    await shell.enqueue('assistance', { needs, language: lang })
+    setAsked('queued')
+    try {
+      await request('/assistance', { method: 'POST', body: { needs, language: lang } })
+      setAsked('sent')
+    } catch {
+      /* stays queued, and the card says so */
+    }
+  }, [shell, needs, lang])
+
+  return (
+    <section class="card">
+      <h2>{t('acc.title', lang)}</h2>
+
+      {asked !== 'no' ? (
+        <p>{asked === 'sent' ? t('acc.requested', lang) : t('acc.requestQueued', lang)}</p>
+      ) : (
+        <button type="button" class="btn btn--primary" onClick={() => void askForHelp()}>
+          {t('acc.needHelpNow', lang)}
+        </button>
+      )}
+
+      {priority && <p class="muted">{t('acc.priority', lang)}</p>}
+
+      {!open ? (
+        <button type="button" class="btn" onClick={() => setOpen(true)}>
+          {t('acc.declare', lang)}
+        </button>
+      ) : (
+        <>
+          {ACC_NEEDS.map((need) => (
+            <label key={need} class="field field--check">
+              <input
+                type="checkbox"
+                checked={needs.includes(need)}
+                onChange={() => toggle(need)}
+              />
+              <span>{t(`acc.need.${need}`, lang)}</span>
+            </label>
+          ))}
+
+          <label class="field field--check">
+            <input
+              type="checkbox"
+              checked={largeText}
+              onChange={(e) => setLargeText((e.target as HTMLInputElement).checked)}
+            />
+            <span>{t('acc.largeText', lang)}</span>
+          </label>
+          <label class="field field--check">
+            <input
+              type="checkbox"
+              checked={highContrast}
+              onChange={(e) => setHighContrast((e.target as HTMLInputElement).checked)}
+            />
+            <span>{t('acc.highContrast', lang)}</span>
+          </label>
+
+          {saved && <p class="muted">{t('acc.saved', lang)}</p>}
+
+          <button type="button" class="btn btn--primary" onClick={() => void save()}>
+            {t('help.submit', lang)}
+          </button>
+          <button type="button" class="btn btn--quiet" onClick={() => setOpen(false)}>
+            {t('common.close', lang)}
+          </button>
+        </>
+      )}
+    </section>
+  )
+}
+
+/** The categories, in the order a pilgrim is most likely to need them. */
+const LF_CATEGORIES = [
+  'bag',
+  'phone',
+  'documents',
+  'money_purse',
+  'walking_aid',
+  'jewellery',
+  'footwear',
+  'clothing',
+  'medicine',
+  'religious_item',
+  'other',
+] as const
+
+type LfCategory = (typeof LF_CATEGORIES)[number]
+
+interface FoundEntry {
+  reference: string
+  category: LfCategory
+  description: string
+  colour: string | null
+  zone_name_mr: string | null
+  found_on: string
+  custody_desk: string | null
+  custody_desk_mr: string | null
+}
+
+/**
+ * Lost and found, pilgrim side.
+ *
+ * Two halves, and they are asymmetric on purpose. Reporting a loss is queued
+ * like an SOS — offline-first, because the moment somebody realises their bag
+ * is gone is very often in a dead spot. Browsing what has been handed in is a
+ * live read with a cache fallback, and it deliberately shows *less* than the
+ * server knows: no identifying marks, no photos, no times. Enough to make
+ * somebody walk to the right desk, never enough to describe an item they have
+ * never seen.
+ *
+ * The identifying-mark field carries its own explanation, because a form that
+ * asks a 70-year-old for a secret without saying why gets a blank field or a
+ * useless one.
+ */
+function LostAndFound({ shell }: { shell: Shell }) {
+  const { lang } = shell
+  const [mode, setMode] = useState<'closed' | 'report' | 'browse'>('closed')
+
+  if (mode === 'closed') {
+    return (
+      <section class="card">
+        <h2>{t('lf.title', lang)}</h2>
+        <button type="button" class="btn" onClick={() => setMode('report')}>
+          {t('lf.reportLost', lang)}
+        </button>
+        <button type="button" class="btn" onClick={() => setMode('browse')}>
+          {t('lf.searchFound', lang)}
+        </button>
+      </section>
+    )
+  }
+
+  return mode === 'report' ? (
+    <LostItemForm shell={shell} onClose={() => setMode('closed')} />
+  ) : (
+    <FoundRegister shell={shell} onClose={() => setMode('closed')} />
+  )
+}
+
+function LostItemForm({ shell, onClose }: { shell: Shell; onClose: () => void }) {
+  const { lang } = shell
+  const [category, setCategory] = useState<LfCategory>('bag')
+  const [description, setDescription] = useState('')
+  const [colour, setColour] = useState('')
+  const [mark, setMark] = useState('')
+  const [done, setDone] = useState(false)
+
+  const submit = useCallback(async () => {
+    // Queued, not posted. `bodyToSend` stamps `occurred_at` from the moment the
+    // pilgrim pressed this, not the moment the phone found a signal — matching
+    // scores on when the thing was lost.
+    await shell.enqueue('lost_item', {
+      category,
+      description: description.trim(),
+      colour: colour.trim() || null,
+      distinguishing_marks: mark.trim() || null,
+      language: lang,
+    })
+    setDone(true)
+  }, [shell, category, description, colour, mark, lang])
+
+  if (done) {
+    return (
+      <section class="card">
+        <p>{t('lf.queued', lang)}</p>
+        <button type="button" class="btn btn--quiet" onClick={onClose}>
+          {t('common.close', lang)}
+        </button>
+      </section>
+    )
+  }
+
+  return (
+    <section class="card">
+      <h2>{t('lf.reportLost', lang)}</h2>
+
+      <label class="field">
+        <span>{t('lf.what', lang)}</span>
+        <select
+          value={category}
+          onChange={(e) => setCategory((e.target as HTMLSelectElement).value as LfCategory)}
+        >
+          {LF_CATEGORIES.map((key) => (
+            <option key={key} value={key}>
+              {t(`lf.cat.${key}`, lang)}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label class="field">
+        <span>{t('lf.describe', lang)}</span>
+        <input
+          value={description}
+          onInput={(e) => setDescription((e.target as HTMLInputElement).value)}
+        />
+      </label>
+
+      <label class="field">
+        <span>{t('lf.colour', lang)}</span>
+        <input value={colour} onInput={(e) => setColour((e.target as HTMLInputElement).value)} />
+      </label>
+
+      <label class="field">
+        <span>{t('lf.mark', lang)}</span>
+        <input value={mark} onInput={(e) => setMark((e.target as HTMLInputElement).value)} />
+      </label>
+      {/* Why the secret is worth giving. Without this the field comes back empty
+          and the item can only ever be returned by a volunteer eyeballing it. */}
+      <p class="muted">{t('lf.markWhy', lang)}</p>
+
+      <button
+        type="button"
+        class="btn btn--primary"
+        onClick={() => void submit()}
+        disabled={description.trim().length < 2}
+      >
+        {t('help.submit', lang)}
+      </button>
+      <button type="button" class="btn btn--quiet" onClick={onClose}>
+        {t('common.close', lang)}
+      </button>
+    </section>
+  )
+}
+
+function FoundRegister({ shell, onClose }: { shell: Shell; onClose: () => void }) {
+  const { lang } = shell
+  const [category, setCategory] = useState<LfCategory | ''>('')
+  const [entries, setEntries] = useState<FoundEntry[] | null>(null)
+  const [fromCache, setFromCache] = useState(false)
+
+  useEffect(() => {
+    const query = category ? `?category=${category}` : ''
+    void cached<{ items: FoundEntry[] }>(
+      `${CACHE_KEYS.crowd}:lostfound:${category || 'all'}`,
+      `/lost-found/search${query}`,
+    ).then((result) => {
+      setEntries(result ? result.value.items : [])
+      setFromCache(result?.fromCache ?? false)
+    })
+  }, [category])
+
+  return (
+    <section class="card">
+      <h2>{t('lf.searchFound', lang)}</h2>
+
+      <label class="field">
+        <span>{t('lf.what', lang)}</span>
+        <select
+          value={category}
+          onChange={(e) => setCategory((e.target as HTMLSelectElement).value as LfCategory | '')}
+        >
+          <option value="">{t('lf.cat.other', lang)}…</option>
+          {LF_CATEGORIES.map((key) => (
+            <option key={key} value={key}>
+              {t(`lf.cat.${key}`, lang)}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {entries === null && <p class="muted">{t('common.loading', lang)}</p>}
+      {entries !== null && entries.length === 0 && <p class="muted">{t('lf.noneFound', lang)}</p>}
+
+      {entries !== null && entries.length > 0 && (
+        <>
+          {/* The whole point of the coarse view: it gets somebody to the right
+              desk, and the mark they give there is what proves it is theirs. */}
+          <p class="muted">{t('lf.askAtDesk', lang)}</p>
+          <ul class="list">
+            {entries.map((entry) => (
+              <li key={entry.reference}>
+                <strong>{t(`lf.cat.${entry.category}`, lang)}</strong> · {entry.description}
+                {entry.colour && <> · {entry.colour}</>}
+                <br />
+                <span class="muted">
+                  {entry.found_on}
+                  {(entry.custody_desk_mr || entry.custody_desk) && (
+                    <>
+                      {' · '}
+                      {t('lf.atDesk', lang)}: {s(entry.custody_desk ?? '', entry.custody_desk_mr ?? '', lang)}
+                    </>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {fromCache && <p class="muted">{t('offline.banner', lang)}</p>}
+
+      <button type="button" class="btn btn--quiet" onClick={onClose}>
+        {t('common.close', lang)}
+      </button>
+    </section>
   )
 }
 

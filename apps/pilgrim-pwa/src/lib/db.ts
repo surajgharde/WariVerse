@@ -110,4 +110,8 @@ export const CACHE_KEYS = {
   facilities: 'facilities',
   essentials: 'pilgrim.essentials',
   zones: 'zones',
+  // The archive is the one cache worth keeping indefinitely: an abhang from the
+  // 17th century does not go stale, and the pilgrim most likely to read one is
+  // on a bus with no signal.
+  heritage: 'heritage',
 } as const

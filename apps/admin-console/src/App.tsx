@@ -26,6 +26,9 @@ import { useCallback, useState } from 'react'
 import type { ReplayFrame } from '@/api/types'
 import { AlertFeed } from '@/components/AlertFeed'
 import { BreachLedger } from '@/components/BreachLedger'
+import { AssistanceBoard } from '@/components/AssistanceBoard'
+import { HeritageReview } from '@/components/HeritageReview'
+import { LostFoundDesk } from '@/components/LostFoundDesk'
 import { CameraGrid } from '@/components/CameraGrid'
 import { ChangeStrip } from '@/components/ChangeStrip'
 import { IncidentBoard } from '@/components/IncidentBoard'
@@ -38,7 +41,15 @@ import { useI18n } from '@/i18n'
 import { AuthProvider, useAuth } from '@/state/auth'
 import { LiveProvider, useLive } from '@/state/live'
 
-type Tab = 'map' | 'incidents' | 'breaches' | 'cameras' | 'replay'
+type Tab =
+  | 'map'
+  | 'incidents'
+  | 'breaches'
+  | 'lostfound'
+  | 'assistance'
+  | 'heritage'
+  | 'cameras'
+  | 'replay'
 
 export default function App() {
   return (
@@ -114,7 +125,19 @@ function Console() {
 
         <main className="centre">
           <nav className="tabs" role="tablist">
-            {(['map', 'incidents', 'breaches', 'cameras', 'replay'] as const).map((key) => (
+            {(
+              [
+                'map',
+                'incidents',
+                'breaches',
+                'lostfound',
+                'assistance',
+                'heritage',
+                'cameras',
+                'replay',
+              ] as const
+            ).map(
+              (key) => (
               <button
                 key={key}
                 type="button"
@@ -135,6 +158,12 @@ function Console() {
               <IncidentBoard />
             ) : tab === 'breaches' ? (
               <BreachLedger />
+            ) : tab === 'lostfound' ? (
+              <LostFoundDesk />
+            ) : tab === 'assistance' ? (
+              <AssistanceBoard />
+            ) : tab === 'heritage' ? (
+              <HeritageReview />
             ) : (
               <>
                 {/* One map instance across both tabs. Remounting MapLibre on a

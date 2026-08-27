@@ -1,10 +1,16 @@
 import { render } from 'preact'
 
 import { App } from './App'
+import { applyDisplayPreferences, storedPreferences } from './lib/display'
 import { currentLang, setLang } from './i18n'
 import './styles.css'
 
 setLang(currentLang())
+
+// Before the first paint, not after the profile read comes back. A partially
+// sighted pilgrim on 2G would otherwise spend several seconds looking at the
+// small type while the network decides. See `lib/display.ts`.
+applyDisplayPreferences(storedPreferences())
 
 const root = document.getElementById('root')
 if (!root) throw new Error('#root is missing from index.html')

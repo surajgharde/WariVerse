@@ -87,6 +87,29 @@ def hash_phone(phone: str) -> str:
     ).hexdigest()
 
 
+def normalise_name(name: str) -> str:
+    """Fold a typed name to one comparable form.
+
+    Collapses runs of whitespace and case-folds, so `" Tukaram  Maharaj "` and
+    `"tukaram maharaj"` are the same pilgrim on the next sign-in.  The *display*
+    name keeps whatever they typed; only the lookup key is folded.
+    """
+    return " ".join(name.split()).casefold()
+
+
+def hash_name(name: str) -> str:
+    """Deterministic HMAC of a pilgrim's name, used as their identity key.
+
+    Same construction as `hash_phone`, with a `name:` namespace so a name can
+    never collide with a phone-derived hash in the same unique column.
+    """
+    return hmac.new(
+        settings.phone_hash_secret.encode("utf-8"),
+        f"name:{normalise_name(name)}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+
 def _contact_cipher() -> Fernet:
     key = settings.contact_encryption_key
     if not key:

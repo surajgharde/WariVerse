@@ -145,15 +145,43 @@ async def _claim_seats(session: AsyncSession, slot_id: uuid.UUID, seats: int) ->
     statement, so twenty thousand concurrent bookings cannot interleave a read
     and a write — and the `no_oversubscription` CHECK constraint is the second
     line of defence if this is ever rewritten carelessly.
+
+    Two reserves are subtracted before a general booking is allowed: the walk-in
+    reserve, and whatever is left of the assisted reserve.  Both protect a
+    pilgrim who is not holding a phone in a queue — one because they never had
+    the app, the other because they cannot stand in the corridor.
+    """
+    remaining_assisted = func.greatest(Slot.assisted_reserve - Slot.assisted_used, 0)
+    result = await session.execute(
+        update(Slot)
+        .where(
+            Slot.id == slot_id,
+            Slot.status == SlotStatus.OPEN,
+            Slot.booked_count + seats + Slot.walkin_reserve + remaining_assisted <= Slot.capacity,
+        )
+        .values(booked_count=Slot.booked_count + seats)
+    )
+    return bool(result.rowcount)
+
+
+async def _claim_assisted_seats(session: AsyncSession, slot_id: uuid.UUID, seats: int) -> bool:
+    """Take `seats` from the assisted reserve.
+
+    Only ever called after the general pool has already refused, and only for a
+    booker with a declared mobility need.  The predicate drops the assisted
+    reserve from the capacity check — that is the whole point, these seats were
+    held back for exactly this caller — while keeping the walk-in reserve, which
+    protects a different person and is not this reserve's to spend.
     """
     result = await session.execute(
         update(Slot)
         .where(
             Slot.id == slot_id,
             Slot.status == SlotStatus.OPEN,
+            Slot.assisted_used + seats <= Slot.assisted_reserve,
             Slot.booked_count + seats + Slot.walkin_reserve <= Slot.capacity,
         )
-        .values(booked_count=Slot.booked_count + seats)
+        .values(booked_count=Slot.booked_count + seats, assisted_used=Slot.assisted_used + seats)
     )
     return bool(result.rowcount)
 
@@ -176,8 +204,14 @@ async def book_pass(
     language: str,
     members: list[tuple[str, str | None]] | None = None,
     allow_early_reslot: bool = False,
+    assisted: bool = False,
 ) -> Pass:
-    """Issue one pass covering up to six people.  One QR, one scan."""
+    """Issue one pass covering up to six people.  One QR, one scan.
+
+    `assisted` is set by the route from the booker's *stored* accessibility
+    profile, never from the request body.  A flag a client can set is a flag
+    every client eventually sets, and the reserved seats would drain in an hour.
+    """
     try:
         slot_service.validate_group_size(group_size)
     except ValueError as exc:
@@ -197,7 +231,12 @@ async def book_pass(
             message_mr="ती वेळ आधीच सुरू झाली आहे.",
         )
 
-    if not await _claim_seats(session, slot_id, group_size):
+    claimed = await _claim_seats(session, slot_id, group_size)
+    if not claimed and assisted:
+        # The general pool is gone. These seats were held back for this caller.
+        claimed = await _claim_assisted_seats(session, slot_id, group_size)
+
+    if not claimed:
         await session.refresh(slot)
         raise AppError(
             "SLOT_FULL",

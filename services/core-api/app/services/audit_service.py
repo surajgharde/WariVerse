@@ -57,6 +57,27 @@ class AuditAction:
     # holds. Every view is logged, on the same principle as breach clips.
     MISSING_PHOTO_VIEWED = "missing_person.photo_viewed"
 
+    # Lost & found. Handover is the one that matters: it is the moment an object
+    # leaves the desk with somebody, and the audit row is what distinguishes a
+    # return from a theft after the fact.
+    LOSTFOUND_REPORTED = "lostfound.reported"
+    LOSTFOUND_MATCHED = "lostfound.matched"
+    LOSTFOUND_MATCH_REJECTED = "lostfound.match_rejected"
+    LOSTFOUND_HANDED_OVER = "lostfound.handed_over"
+
+    # Accessibility. The *contents* of a profile are never written here — see
+    # the note on `declare_my_profile`. Only that one was set, and by whom.
+    ACCESSIBILITY_PROFILE_SET = "accessibility.profile_set"
+    ASSISTANCE_REQUESTED = "assistance.requested"
+    ASSISTANCE_CLOSED = "assistance.closed"
+    FACILITY_SURVEYED = "facility.accessibility_surveyed"
+
+    # Heritage. Publishing puts text under the archive's name, which is a
+    # decision somebody should be attached to forever.
+    HERITAGE_CONTRIBUTED = "heritage.contributed"
+    HERITAGE_REVIEWED = "heritage.reviewed"
+    HERITAGE_CORRECTED = "heritage.corrected"
+
     BREACH_REVIEWED = "breach.reviewed"
     BREACH_CLIP_VIEWED = "breach.clip_viewed"
     BREACH_DELETED = "breach.deleted"

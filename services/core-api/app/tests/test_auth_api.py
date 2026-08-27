@@ -99,6 +99,53 @@ async def test_otp_requests_are_limited_to_three_per_hour(client: AsyncClient, a
     assert limited.json()["error"]["details"]["limit"] == 3
 
 
+# --- name sign-in ----------------------------------------------------------
+async def test_name_login_creates_a_pilgrim_and_returns_tokens(
+    client: AsyncClient, session: AsyncSession, api_prefix: str
+) -> None:
+    response = await client.post(
+        f"{api_prefix}/auth/name-login", json={"name": "तुकाराम महाराज", "language": "mr"}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["user"]["role"] == Role.PILGRIM
+    assert body["user"]["name"] == "तुकाराम महाराज"
+    assert "pass:book" in body["user"]["permissions"]
+
+    user = (await session.execute(select(User))).scalar_one()
+    # No phone was collected, so there is nothing to store or leak.
+    assert user.phone is None
+    assert len(user.phone_hash) == 64
+
+
+async def test_name_login_returns_to_the_same_account(
+    client: AsyncClient, session: AsyncSession, api_prefix: str
+) -> None:
+    """Otherwise a pilgrim signing in again loses the pass they booked."""
+    first = await client.post(f"{api_prefix}/auth/name-login", json={"name": "Tukaram Maharaj"})
+    second = await client.post(f"{api_prefix}/auth/name-login", json={"name": "  tukaram   maharaj "})
+    assert second.status_code == 200, second.text
+    assert first.json()["user"]["id"] == second.json()["user"]["id"]
+    assert await session.scalar(select(func.count()).select_from(User)) == 1
+
+
+async def test_name_login_cannot_reach_a_staff_account(
+    client: AsyncClient, api_prefix: str, make_user
+) -> None:
+    """A staff member's name is public; their account must not be."""
+    staff = await make_user(phone=STAFF_PHONE, role=Role.SECURITY_OFFICER, password=STAFF_PASSWORD)
+    response = await client.post(f"{api_prefix}/auth/name-login", json={"name": staff.name})
+    assert response.status_code == 200, response.text
+    # A brand new pilgrim, not the officer.
+    assert response.json()["user"]["id"] != str(staff.id)
+    assert response.json()["user"]["role"] == Role.PILGRIM
+
+
+async def test_name_login_rejects_a_blank_name(client: AsyncClient, api_prefix: str) -> None:
+    response = await client.post(f"{api_prefix}/auth/name-login", json={"name": "   "})
+    assert response.status_code == 422
+
+
 # --- staff login -----------------------------------------------------------
 async def test_staff_login_with_password(client: AsyncClient, api_prefix: str, make_user) -> None:
     await make_user(phone=STAFF_PHONE, role=Role.SECURITY_OFFICER, password=STAFF_PASSWORD)

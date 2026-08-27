@@ -41,7 +41,15 @@ from app.schemas.passes import (
     SlotGrid,
     SlotOut,
 )
-from app.services import audit_service, config_service, pass_service, qr_image, qr_service, slot_service
+from app.services import (
+    accessibility_service,
+    audit_service,
+    config_service,
+    pass_service,
+    qr_image,
+    qr_service,
+    slot_service,
+)
 from app.services.audit_service import AuditAction
 
 router = APIRouter(tags=["passes"], responses={404: {"model": ErrorResponse}})
@@ -165,6 +173,11 @@ async def book_pass(
             details={"group_size": payload.group_size, "members": len(payload.members)},
         )
 
+    # Read from the caller's stored profile, never from the request body
+    # (Track 1, item 4). A body field would be set by every client within a
+    # week and the reserved seats would be gone by lunchtime on day one.
+    assisted = await accessibility_service.assisted_booking_allowed(session, actor.id)
+
     record = await pass_service.book_pass(
         session,
         slot_id=payload.slot_id,
@@ -174,6 +187,7 @@ async def book_pass(
         language=payload.language,
         members=[(m.name, m.age_band) for m in payload.members],
         allow_early_reslot=payload.allow_early_reslot,
+        assisted=assisted,
     )
 
     await audit_service.record(
