@@ -88,6 +88,21 @@ class Settings(BaseSettings):
     # Ingest batches are capped so a wedged AI engine cannot post a 100 MB body.
     ingest_max_batch: int = 200
 
+    # --- notifications ----------------------------------------------------
+    # Where an SOS goes by SMS when the pilgrim app cannot reach the API at all
+    # (Section 4/M4). Empty means no gateway is configured, and the app is
+    # expected to say so rather than render a button that dials nothing.
+    control_room_sms_number: str = ""
+
+    # --- assistant (Section 13, Phase 9) ---------------------------------
+    # Empty is a supported state, not a broken one. With no key the assistant
+    # answers from `assistant/fallback.py` — the same five tools, deterministic
+    # templates instead of fluent prose — and every turn is logged as
+    # `degraded`. Section 11: every module has a defined manual mode, and a
+    # demo, a CI run and an expired billing account all land in this one.
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash"
+
     # --- http ------------------------------------------------------------
     # NoDecode: the value arrives as a comma-separated string from .env, not as
     # JSON, so the validator below owns the parsing.

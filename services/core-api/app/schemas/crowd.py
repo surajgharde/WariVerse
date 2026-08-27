@@ -349,3 +349,114 @@ class EngineConfig(ApiModel):
 
 
 EngineZone.model_rebuild()
+
+
+# ---------------------------------------------------------------------------
+# forecasting (Phase 8, Section 4/M6)
+# ---------------------------------------------------------------------------
+class ForecastIn(ApiModel):
+    """One predicted density, as the engine publishes it.
+
+    `model_version` and `trained_on` are required, not optional.  Section 4/M6
+    ends with "Never hide the provenance of a prediction", and the way a field
+    like that quietly goes missing is by being nullable and defaulted.
+    """
+
+    zone_id: uuid.UUID | None = None
+    zone_code: str | None = None
+    horizon_minutes: int = Field(ge=1, le=1440)
+    predicted_density: float = Field(ge=0, le=20)
+    interval_low: float = Field(ge=0, le=20)
+    interval_high: float = Field(ge=0, le=20)
+    model_version: str = Field(min_length=1, max_length=64)
+    trained_on: Literal["simulated", "observed", "mixed"]
+    validation_mae: float | None = Field(default=None, ge=0, le=20)
+
+    @model_validator(mode="after")
+    def _coherent(self) -> ForecastIn:
+        if self.zone_id is None and not self.zone_code:
+            raise ValueError("Either zone_id or zone_code is required")
+        if not self.interval_low <= self.predicted_density <= self.interval_high:
+            raise ValueError("predicted_density must lie inside [interval_low, interval_high]")
+        return self
+
+
+class ForecastIngest(ApiModel):
+    issued_at: datetime
+    forecasts: list[ForecastIn] = Field(min_length=1, max_length=500)
+
+
+class ForecastOut(ApiModel):
+    """Section 4/M6's output contract, plus the two things it left implicit.
+
+    `is_stale` and `age_seconds`, because a forecast issued forty minutes ago
+    for a horizon of thirty is not a forecast any more — it is a description of
+    a moment that has already happened, and the console must be able to tell.
+    """
+
+    zone_id: uuid.UUID
+    zone_code: str
+    zone_name: str
+    zone_name_mr: str
+    horizon_minutes: int
+    issued_at: datetime
+    target_at: datetime
+    predicted_density: float
+    predicted_level: DensityLevel
+    interval_low: float
+    interval_high: float
+    model_version: str
+    trained_on: str
+    validation_mae: float | None = None
+    age_seconds: float
+    is_stale: bool
+
+
+class ForecastSeries(ApiModel):
+    """Every live forecast, and an explicit account of what is missing.
+
+    `unavailable_zones` is not a nicety.  A forecast strip that silently omits
+    the zone whose model has not warmed up looks exactly like a forecast strip
+    where that zone is calm — the same failure the KPI strip's `null` rule was
+    written for (Section 4/M3).
+    """
+
+    items: list[ForecastOut]
+    unavailable_zones: list[str] = Field(default_factory=list)
+    horizons: list[int]
+    #: Verbatim for the UI banner while `trained_on` is `simulated`.  Section
+    #: 4/M6's cold-start rule: label the provenance until real data exists.
+    provenance_notice: str | None = None
+    provenance_notice_mr: str | None = None
+    generated_at: datetime
+
+
+class ForecastIngestResult(ApiModel):
+    accepted: int
+    rejected: int
+    alerts_raised: int
+    rejections: list[dict[str, Any]] = Field(default_factory=list)
+    received_at: datetime
+
+
+class SlotPressure(ApiModel):
+    """Passes booked into an upcoming slot — a forecast feature the engine
+    cannot see for itself, because it holds no database credentials."""
+
+    starts_at: datetime
+    booked_persons: int
+
+
+class EngineContext(ApiModel):
+    """Feature inputs that live in the core API's tables, not the engine's.
+
+    Section 4/M6 lists "active pass bookings for upcoming slots" among the
+    forecast features.  The engine cannot query for those without breaching the
+    Section 6 boundary, so the boundary stays and the numbers come to it.
+    """
+
+    slots: list[SlotPressure]
+    #: Named so the engine can record which listed features it is running
+    #: without, rather than treating an absent input as a zero.
+    unavailable_features: list[str] = Field(default_factory=list)
+    generated_at: datetime

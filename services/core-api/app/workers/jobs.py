@@ -13,12 +13,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from app.core import events
+from sqlalchemy import func, select
+
+from app.core import events, metrics
 from app.core.db import SessionFactory
 from app.core.logging import get_logger, set_trace_id
 from app.core.redis_client import aw, redis
 from app.core.security import now_utc
-from app.models import PurgeLog, Zone
+from app.models import Camera, Dindi, DindiStatus, PurgeLog, Zone
 from app.services import (
     alert_service,
     audit_service,
@@ -26,9 +28,12 @@ from app.services import (
     config_service,
     crowd_service,
     incident_service,
+    palkhi_service,
     pass_service,
+    recommendations,
     reslot_service,
 )
+from app.services.assistant import service as assistant_service
 
 logger = get_logger(__name__)
 
@@ -59,6 +64,17 @@ BREACH_PURGE_INTERVAL_SECONDS = 3600
 #: A tamper-evident ledger nobody checks is evident to nobody. Hourly means a
 #: break is found within an hour of being made.
 CHAIN_VERIFY_INTERVAL_SECONDS = 3600
+
+#: Pings arrive every 60 seconds, but a walking group's deviation from schedule
+#: changes over tens of minutes — re-deriving it on every ping would be the same
+#: answer computed sixty times an hour per Dindi. Two minutes keeps a halt town
+#: inside the smallest useful slice of the 45-minute threshold it is warned
+#: against, at a fortieth of the work.
+PALKHI_SWEEP_INTERVAL_SECONDS = 120
+
+#: Assistant transcripts are on a 90-day clock, so hourly is far more often than
+#: needed and costs one indexed query — the same reasoning as the clip purge.
+ASSISTANT_PURGE_INTERVAL_SECONDS = 3600
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +203,23 @@ async def run_camera_watchdog(at: datetime | None = None) -> WatchdogRun:
                         },
                     )
                 )
+
+        # Coverage gauges, refreshed on the tick that already knows. Section 11
+        # wants alerting on camera heartbeat loss; the alert rule fires on these
+        # (see `infra/prometheus/alerts.yml`) rather than on a log line, so it
+        # survives a log pipeline being down too.
+        coverage = await session.execute(
+            select(
+                func.count(Camera.id),
+                func.count(Camera.homography_matrix),
+                func.count(Camera.id).filter(Camera.status == "online"),
+            )
+        )
+        total, calibrated, online = coverage.one()
+        metrics.observe_camera_coverage(
+            online=int(online), total=int(total), calibrated=int(calibrated)
+        )
+
         await session.commit()
 
     await events.publish_many(outbound)
@@ -286,6 +319,243 @@ async def run_incident_sla(at: datetime | None = None) -> SlaSweepRun:
             extra={"breached": len(breaches), "worst_overdue_seconds": round(worst, 1)},
         )
     return SlaSweepRun(ran_at=moment, breached=len(breaches), worst_overdue_seconds=worst)
+
+
+@dataclass(frozen=True, slots=True)
+class PalkhiSweepRun:
+    ran_at: datetime
+    dindis_checked: int
+    deviations_raised: int
+    deviations_cleared: int
+    signal_lost: int
+    off_route: int
+
+
+async def run_palkhi_sweep(at: datetime | None = None) -> PalkhiSweepRun:
+    """Compare every walking Dindi against its own halt schedule (Section 4/M8).
+
+    Three conditions come out of one pass over the same data, and the order they
+    are handled in is the point:
+
+    1. **Signal lost first.** A Dindi whose phone has gone quiet gets no
+       deviation verdict at all. Projecting a walking pace forward from a
+       position that is two hours old produces an ETA that renders on a halt
+       town's board identically to a measured one, and the town staffs the
+       kitchen for it.
+    2. **Off route**, which is a question rather than a finding — the phone
+       travels with one volunteer, and a volunteer in a village shop is not a
+       procession that has changed its road.
+    3. **Deviation**, which is the thing Section 4/M8 actually asks for: pace
+       against schedule, and the next halt town told when the gap passes 45
+       minutes so the arrangements move with it.
+
+    One Dindi failing does not stop the sweep. Forty groups are walking and a
+    bad row in one schedule must not cost the other thirty-nine their alerts.
+    """
+    set_trace_id()
+    moment = at or now_utc()
+    outbound: list[tuple[str, dict[str, object]]] = []
+    raised = cleared = lost = off_route = 0
+
+    async with SessionFactory() as session:
+        thresholds = await alert_service.load_thresholds(session)
+        off_route_limit = await config_service.get_float(session, "dindi_off_route_alert_m")
+        dindis = await palkhi_service.active_dindis(session)
+
+        for dindi in dindis:
+            try:
+                state = await palkhi_service.progress(session, dindi, at=moment)
+            except Exception:
+                logger.exception("palkhi_progress_failed", extra={"dindi": dindi.code})
+                continue
+
+            # --- 1. is the phone still talking to us? --------------------
+            if state.is_signal_lost:
+                dindi.status = str(DindiStatus.SIGNAL_LOST)
+                alert = await alert_service.raise_palkhi_condition(
+                    session,
+                    recommendations.PALKHI_SIGNAL_LOST_RULE,
+                    dindi.id,
+                    trigger_value=round((state.seconds_since_ping or 0) / 60.0, 1),
+                    detail=f"{dindi.name}, last report {round((state.seconds_since_ping or 0) / 60)} min ago",
+                    detail_mr=f"{dindi.name_mr}, शेवटची नोंद {round((state.seconds_since_ping or 0) / 60)} मिनिटांपूर्वी",
+                    observed_at=dindi.last_ping_at or moment,
+                    at=moment,
+                )
+                if alert is not None:
+                    lost += 1
+                    outbound.append((events.DINDI_SIGNAL, _dindi_event(dindi, state, "signal_lost")))
+                continue
+
+            if await alert_service.clear_palkhi_condition(
+                session, dindi.id, recommendations.PALKHI_SIGNAL_LOST, at=moment
+            ):
+                outbound.append((events.DINDI_SIGNAL, _dindi_event(dindi, state, "reporting")))
+
+            # --- 2. is it still on the road we think it is? --------------
+            if state.off_route_m is not None and state.off_route_m > off_route_limit:
+                alert = await alert_service.raise_palkhi_condition(
+                    session,
+                    recommendations.PALKHI_OFF_ROUTE_RULE,
+                    dindi.id,
+                    trigger_value=round(state.off_route_m, 1),
+                    detail=f"{dindi.name}, {round(state.off_route_m)} m off the route line",
+                    detail_mr=f"{dindi.name_mr}, मार्गापासून {round(state.off_route_m)} मीटर दूर",
+                    observed_at=dindi.last_ping_at or moment,
+                    at=moment,
+                )
+                if alert is not None:
+                    off_route += 1
+            else:
+                await alert_service.clear_palkhi_condition(
+                    session, dindi.id, recommendations.PALKHI_OFF_ROUTE, at=moment
+                )
+
+            # --- 3. is it going to arrive when it said it would? ---------
+            if state.next is None or state.deviation_minutes is None or state.eta is None:
+                # No next town, or no ETA the pace can support. Nothing to say —
+                # and inventing a deviation from a default walking speed is the
+                # one thing `eta_for` exists to refuse.
+                continue
+
+            stop = state.next.stop
+            town = state.next.town
+            signal = recommendations.DindiSignal(
+                dindi_name=dindi.name,
+                dindi_name_mr=dindi.name_mr,
+                next_town=town.name,
+                next_town_mr=town.name_mr,
+                deviation_minutes=state.deviation_minutes,
+                planned_arrival=stop.planned_arrival,
+                eta=state.eta,
+                expected_count=stop.expected_count or dindi.expected_count,
+                pace_kmph=state.pace.kmph,
+                km_remaining=state.next.km_remaining,
+                next_town_readiness=town.readiness_status,
+                pace_samples=state.pace.samples,
+            )
+            outcome = await alert_service.evaluate_dindi(
+                session, signal, dindi.id, town.id, thresholds, at=moment
+            )
+            if outcome.created or outcome.refreshed:
+                raised += 1 if outcome.created else 0
+                if outcome.alert is not None:
+                    outbound.append(
+                        (
+                            events.DINDI_DEVIATION,
+                            {
+                                **_dindi_event(dindi, state, dindi.status),
+                                "alert_id": str(outcome.alert.id),
+                                "severity": outcome.alert.severity,
+                                "rule_id": outcome.alert.rule_id,
+                                "halt_town_id": str(town.id),
+                                "halt_town": town.name,
+                                "halt_town_mr": town.name_mr,
+                                "planned_arrival": stop.planned_arrival,
+                                "recommended_action": outcome.alert.recommended_action,
+                                "recommended_action_mr": outcome.alert.recommended_action_mr,
+                            },
+                        )
+                    )
+            cleared += len(outcome.resolved)
+
+        # The pair of gauges that make the Palkhi map honest: how many groups
+        # are reporting, and how many are walking that nobody can see.
+        metrics.observe_dindis(
+            reporting=len(dindis) - lost,
+            silent=lost,
+            deviating=raised,
+        )
+        await session.commit()
+
+    await events.publish_many(outbound)
+    if raised or cleared or lost or off_route:
+        logger.info(
+            "palkhi_sweep",
+            extra={
+                "dindis": len(dindis),
+                "deviations_raised": raised,
+                "deviations_cleared": cleared,
+                "signal_lost": lost,
+                "off_route": off_route,
+            },
+        )
+    return PalkhiSweepRun(
+        ran_at=moment,
+        dindis_checked=len(dindis),
+        deviations_raised=raised,
+        deviations_cleared=cleared,
+        signal_lost=lost,
+        off_route=off_route,
+    )
+
+
+def _dindi_event(
+    dindi: Dindi, state: palkhi_service.DindiProgress, status: str
+) -> dict[str, object]:
+    """The socket payload for a Dindi.
+
+    Carries no leader contact and no device id. The command centre needs to know
+    which group is where and how much the figure can be trusted; the phone
+    number of the volunteer carrying the tracking phone is not part of that, and
+    a WebSocket channel is the last place it should end up.
+
+    `pace_method` and `pace_samples` ride along for the same reason every other
+    number in this system carries its provenance: an ETA built from four dots
+    and a crow-flies distance is a different claim from one built from ninety
+    minutes of route-projected walking, and the console has to be able to render
+    the difference.
+    """
+    return {
+        "dindi_id": str(dindi.id),
+        "code": dindi.code,
+        "name": dindi.name,
+        "name_mr": dindi.name_mr,
+        "status": status,
+        "eta": state.eta,
+        "deviation_minutes": (
+            round(state.deviation_minutes, 1) if state.deviation_minutes is not None else None
+        ),
+        "pace_kmph": round(state.pace.kmph, 2),
+        "pace_method": state.pace.method,
+        "pace_samples": state.pace.samples,
+        "km_walked": state.km_walked,
+        "seconds_since_ping": (
+            round(state.seconds_since_ping) if state.seconds_since_ping is not None else None
+        ),
+    }
+
+
+async def run_assistant_purge(at: datetime | None = None) -> int:
+    """Drop assistant transcripts past their retention (Section 12, Phase 9).
+
+    The transcripts exist so a reviewer can answer "why did it say that" during
+    and shortly after the Wari. Keeping a pilgrim's questions for a year
+    afterwards serves nobody and is precisely the accumulation the DPDP Act is
+    about. A `purge_log` row goes down on every run including the empty ones —
+    the evidence that retention has been applied all season rather than since
+    last Tuesday, the same argument as the photo and clip purges.
+    """
+    set_trace_id()
+    moment = at or now_utc()
+
+    async with SessionFactory() as session:
+        days = await config_service.get_int(session, "assistant_turn_retention_days")
+        purged = await assistant_service.purge_transcripts(session, at=moment)
+        session.add(
+            PurgeLog(
+                target_type="assistant_turn",
+                rows_affected=purged,
+                cutoff=moment,
+                executed_at=moment,
+                detail={"retention_days": days},
+            )
+        )
+        await session.commit()
+
+    if purged:
+        logger.info("assistant_transcripts_purged", extra={"count": purged})
+    return purged
 
 
 async def run_photo_purge(at: datetime | None = None) -> int:
@@ -450,3 +720,15 @@ async def scheduled_chain_verification() -> None:
     if not await _acquire("chain_verify", CHAIN_VERIFY_INTERVAL_SECONDS - 60):
         return
     await run_chain_verification()
+
+
+async def scheduled_palkhi_sweep() -> None:
+    if not await _acquire("palkhi_sweep", PALKHI_SWEEP_INTERVAL_SECONDS - 10):
+        return
+    await run_palkhi_sweep()
+
+
+async def scheduled_assistant_purge() -> None:
+    if not await _acquire("assistant_purge", ASSISTANT_PURGE_INTERVAL_SECONDS - 60):
+        return
+    await run_assistant_purge()

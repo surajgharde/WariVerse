@@ -52,6 +52,43 @@ _COMPASS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 _DENSITY_DISAGREEMENT = 0.05
 
 
+#: Pilgrim-facing guidance per band.  Marathi is the operational text; the
+#: English is the translation.  Note that none of these say "safe" — the safest
+#: band says "comfortable", because a crowd is never a guarantee.
+#:
+#: This table lives in the service rather than in the route that renders it
+#: because two things now read it: `GET /crowd/public`, and the Phase 9
+#: assistant answering "how crowded is the east corridor".  An assistant that
+#: composed its own wording for a CRITICAL zone would be a language model
+#: writing a crowd-safety instruction, which Section 13 forbids outright.  It
+#: gets to translate this sentence; it does not get to write one.
+PUBLIC_ADVICE: dict[DensityLevel, tuple[str, str]] = {
+    DensityLevel.SAFE: (
+        "Comfortable. You can walk at a normal pace.",
+        "आरामदायी. तुम्ही सामान्य गतीने चालू शकता.",
+    ),
+    DensityLevel.MODERATE: (
+        "Busy, but moving. Keep children and elders close to you.",
+        "गर्दी आहे पण रांग चालू आहे. मुलांना आणि वृद्धांना जवळ ठेवा.",
+    ),
+    DensityLevel.HIGH: (
+        "Very crowded. If you can wait or take another route, do that.",
+        "खूप गर्दी आहे. शक्य असल्यास थांबा किंवा दुसऱ्या मार्गाने जा.",
+    ),
+    DensityLevel.CRITICAL: (
+        "Do not enter this area. Stay where you are and follow the volunteers' instructions.",
+        "या भागात जाऊ नका. आहात तिथेच थांबा आणि स्वयंसेवकांच्या सूचना पाळा.",
+    ),
+}
+
+#: The most important string in this module.  An unknown zone must never render
+#: like a clear one — that is precisely how someone walks into a crush.
+UNKNOWN_ADVICE = (
+    "No live reading for this area right now. Treat it as unknown, not as clear, and follow the volunteers.",
+    "या भागाची सध्याची माहिती उपलब्ध नाही. ते मोकळे आहे असे समजू नका; स्वयंसेवकांच्या सूचना पाळा.",
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ReadingIn:
     """One 10-second window for one zone, as published by the AI engine."""

@@ -247,13 +247,20 @@ class SimEngine:
         return weights
 
     # -- generation -------------------------------------------------------
-    def observe(self, at: datetime | None = None) -> list[ZoneObservation]:
-        """One 10-second window for every zone."""
+    def observe(self, at: datetime | None = None, *, with_heat_cells: bool = True) -> list[ZoneObservation]:
+        """One 10-second window for every zone.
+
+        `with_heat_cells=False` skips the 6x4 overlay grid.  The forecaster's
+        season generator (Phase 8) runs this loop about sixty thousand times to
+        build a training set and never looks at the overlay; computing 24 cells
+        per zone per window would be most of that job's runtime, spent on a
+        result nobody reads.
+        """
         moment = at or datetime.now(UTC)
         self.prune(moment)
-        return [self._observe_zone(zone, moment) for zone in self.zones]
+        return [self._observe_zone(zone, moment, with_heat_cells=with_heat_cells) for zone in self.zones]
 
-    def _observe_zone(self, zone: ZoneSpec, at: datetime) -> ZoneObservation:
+    def _observe_zone(self, zone: ZoneSpec, at: datetime, *, with_heat_cells: bool = True) -> ZoneObservation:
         scale, bearing, two_way = _ZONE_CHARACTER.get(zone.zone_type, _DEFAULT_CHARACTER)
         state = self._state.setdefault(zone.zone_id, _ZoneState())
         weights = self._injection_weights(zone.code, at)
@@ -320,7 +327,7 @@ class SimEngine:
             # it for a measurement — including the person watching the demo.
             confidence=0.75,
             camera_count=len(zone.cameras),
-            heat_cells=self._heat_cells(zone, person_count, density),
+            heat_cells=self._heat_cells(zone, person_count, density) if with_heat_cells else (),
         )
 
     def _heat_cells(self, zone: ZoneSpec, count: int, density: float) -> tuple[tuple[float, float, float], ...]:

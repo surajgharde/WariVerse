@@ -61,6 +61,15 @@ class AuditAction:
     BREACH_CLIP_VIEWED = "breach.clip_viewed"
     BREACH_DELETED = "breach.deleted"
 
+    # Palkhi (Phase 9). Registering a Dindi writes a leader's phone into the
+    # system and the readiness board is what a district administration
+    # provisions against — both are decisions a review will want an actor for.
+    DINDI_REGISTERED = "dindi.registered"
+    DINDI_UPDATED = "dindi.updated"
+    DINDI_SCHEDULE_SET = "dindi.schedule_set"
+    DINDI_DEVICE_REASSIGNED = "dindi.device_reassigned"
+    HALT_READINESS_UPDATED = "halt_town.readiness_updated"
+
     CAMERA_CALIBRATED = "camera.calibrated"
     CAMERA_UPDATED = "camera.updated"
     ZONE_UPDATED = "zone.updated"

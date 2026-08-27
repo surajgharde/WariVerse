@@ -11,6 +11,9 @@ pyjwt==2.10.1
 argon2-cffi==23.1.0
 cryptography==44.0.0
 pyotp==2.9.0
+# Renders the no-JS pass card's QR (Phase 7). Pure Python, no dependencies of
+# its own; see app/services/qr_image.py for why this is a library and not ours.
+segno==1.6.1
 python-multipart==0.0.20
 prometheus-client==0.21.1
 httpx==0.28.1

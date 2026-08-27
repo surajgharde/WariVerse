@@ -1,0 +1,437 @@
+/* Pilgrim app styles (Section 4/M7 + Section 10).
+ *
+ * "Your user is often 65+ years old, walking, and tired."
+ *
+ * That sentence is the whole design brief, and every number below comes from
+ * it: 18px base type, 48px minimum touch targets, 4.5:1 contrast, one primary
+ * action per screen, generous spacing, no jargon.
+ *
+ * Light surface here, unlike the admin console's dark one. The console is a dim
+ * control room; this is a phone held at arm's length in Maharashtra sunlight in
+ * July, where a dark theme is unreadable.
+ */
+
+:root {
+  /* Section 10's palette. */
+  --saffron: #e8622b;
+  --indigo: #1b2a5e;
+  --tulsi: #2e7d5b;
+  --amber: #e0a106;
+  --sindoor: #c42b1c;
+  --paper: #faf7f2;
+  --ink: #16181d;
+
+  /* Contrast-checked against --paper. Every one of these clears 4.5:1 for
+   * body text; the band colours below are used as fills behind dark text or
+   * as borders, never as text on paper. */
+  --text: #16181d;
+  --text-dim: #4a5160;
+  --line: #d9d2c7;
+  --surface: #ffffff;
+
+  --level-safe: #2e7d5b;
+  --level-moderate: #a06f00;
+  --level-high: #c4551c;
+  --level-critical: #c42b1c;
+  --level-unknown: #5b6270;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+
+  --radius: 10px;
+
+  /* 48px is the accessibility floor, not the target. Anything a tired hand has
+   * to hit while walking gets more. */
+  --touch: 48px;
+  --touch-primary: 64px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--text);
+}
+
+body {
+  /* 18px base — the spec's minimum, used as the actual base rather than as a
+   * floor that headings climb away from. */
+  font-size: 18px;
+  line-height: 1.5;
+  font-family: 'Mukta', 'Noto Sans Devanagari', 'Nirmala UI', system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+.mono {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Focus has to be visible: this app is used with a screen reader and with
+ * switch access, and the default ring disappears against saffron. */
+:focus-visible {
+  outline: 3px solid var(--indigo);
+  outline-offset: 2px;
+}
+
+/* --- shell ---------------------------------------------------------------- */
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  /* Respect the notch and the home indicator; a tab bar under the gesture bar
+   * is a tab bar that mis-taps. */
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.screen {
+  flex: 1;
+  padding: var(--sp-4);
+  padding-bottom: calc(var(--touch) + var(--sp-6));
+}
+
+.screen--centred {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--sp-3);
+}
+
+.title {
+  margin: 0 0 var(--sp-4);
+  font-size: 26px;
+  line-height: 1.25;
+}
+
+h2 {
+  margin: 0 0 var(--sp-2);
+  font-size: 20px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+
+.big {
+  font-size: 24px;
+  margin: var(--sp-1) 0;
+}
+
+.muted {
+  color: var(--text-dim);
+}
+
+.small {
+  font-size: 15px;
+}
+
+.warn {
+  color: #8a4b00;
+}
+
+.error {
+  color: var(--sindoor);
+}
+
+/* --- the offline banner ---------------------------------------------------
+ * Section 4/M7 requires this and requires it to be clear. It sits above
+ * everything, is not dismissible, and always carries the age of what is on
+ * screen — a banner that says "offline" without saying "as of when" is half a
+ * warning.
+ */
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  align-items: baseline;
+  padding: var(--sp-3) var(--sp-4);
+  background: #fff3d6;
+  border-bottom: 2px solid var(--amber);
+  font-size: 16px;
+}
+
+.banner__pending {
+  margin-left: auto;
+  color: #7a4a00;
+}
+
+/* --- buttons --------------------------------------------------------------
+ * Every one of these is at least 48px tall. The SOS button is 64px and full
+ * width, because it must be findable by a tired hand without looking.
+ */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: var(--touch);
+  margin-top: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface);
+  border: 2px solid var(--indigo);
+  border-radius: var(--radius);
+  color: var(--indigo);
+  font: inherit;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.btn--primary {
+  background: var(--indigo);
+  color: #fff;
+}
+
+.btn--quiet {
+  border-color: var(--line);
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.btn--huge {
+  min-height: var(--touch-primary);
+  font-size: 22px;
+}
+
+.btn--sos {
+  background: var(--sindoor);
+  border-color: var(--sindoor);
+  color: #fff;
+}
+
+.btn--call {
+  background: var(--tulsi);
+  border-color: var(--tulsi);
+  color: #fff;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.card--sos,
+.card--sos-done {
+  border-color: var(--sindoor);
+  border-width: 2px;
+}
+
+/* --- fields --------------------------------------------------------------- */
+.field {
+  display: block;
+  margin-bottom: var(--sp-4);
+}
+
+.field span {
+  display: block;
+  margin-bottom: var(--sp-1);
+  font-size: 16px;
+  color: var(--text-dim);
+}
+
+.field input {
+  width: 100%;
+  min-height: var(--touch);
+  padding: var(--sp-3);
+  background: var(--surface);
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  /* 18px minimum, and not smaller: iOS zooms the viewport on focus for
+   * anything under 16px, which throws a one-handed layout across the screen. */
+  font: inherit;
+}
+
+/* --- zones ---------------------------------------------------------------- */
+.zones {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.zone {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--sp-1) var(--sp-3);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--line);
+  border-left: 6px solid var(--level-unknown);
+  padding-left: var(--sp-3);
+}
+
+.zone--safe {
+  border-left-color: var(--level-safe);
+}
+.zone--moderate {
+  border-left-color: var(--level-moderate);
+}
+.zone--high {
+  border-left-color: var(--level-high);
+}
+.zone--critical {
+  border-left-color: var(--level-critical);
+}
+
+/* An unknown zone is grey and dashed — never a pale version of safe. Colour
+ * alone is not enough: this is read in sunlight, and by people who do not
+ * distinguish red from green. */
+.zone--unknown {
+  border-left-style: dashed;
+}
+
+.zone__name {
+  font-weight: 600;
+}
+
+.zone__level {
+  font-weight: 600;
+  text-align: right;
+}
+
+.zone--critical .zone__level {
+  color: var(--level-critical);
+}
+
+.zone__advice {
+  grid-column: 1 / -1;
+  font-size: 16px;
+  color: var(--text-dim);
+}
+
+/* --- pass ----------------------------------------------------------------- */
+.card--qr {
+  text-align: center;
+}
+
+.qr {
+  width: min(72vw, 320px);
+  margin: var(--sp-3) auto;
+}
+
+.qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-2) var(--sp-4);
+  margin: 0;
+}
+
+.detail dt {
+  color: var(--text-dim);
+}
+
+.detail dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* --- map ------------------------------------------------------------------ */
+.map {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.map__zone {
+  stroke: #fff;
+  stroke-width: 0.4;
+  fill: var(--level-unknown);
+  fill-opacity: 0.35;
+}
+
+.map__zone--safe {
+  fill: var(--level-safe);
+  fill-opacity: 0.55;
+}
+.map__zone--moderate {
+  fill: var(--level-moderate);
+  fill-opacity: 0.55;
+}
+.map__zone--high {
+  fill: var(--level-high);
+  fill-opacity: 0.6;
+}
+.map__zone--critical {
+  fill: var(--level-critical);
+  fill-opacity: 0.7;
+}
+
+.facilities {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.facilities li {
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.facility--down {
+  opacity: 0.65;
+}
+
+/* --- tabs -----------------------------------------------------------------
+ * Fixed to the bottom: this app is used one-handed while walking, and the top
+ * of a modern phone is not reachable with a thumb.
+ */
+.tabs {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.tab {
+  flex: 1;
+  min-height: var(--touch);
+  padding: var(--sp-2);
+  background: none;
+  border: none;
+  border-top: 3px solid transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.tab--active {
+  color: var(--indigo);
+  border-top-color: var(--saffron);
+  font-weight: 600;
+}
+
+/* Section 10: respect prefers-reduced-motion. Nothing here animates anyway —
+ * on a 2016 device an animation is a dropped frame, not a delight. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

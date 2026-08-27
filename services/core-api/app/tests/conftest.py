@@ -149,7 +149,8 @@ async def redis_client(database: None) -> AsyncIterator[object]:
 _TRUNCATE_ORDER = (
     "clip_access_log", "purge_log", "breach_events", "pass_notifications", "pass_members",
     "passes", "slots", "incident_events", "missing_persons", "incidents", "responders",
-    "dindi_pings", "dindis", "halt_towns", "routes", "density_readings", "alerts",
+    "assistant_turns", "dindi_pings", "dindi_schedule", "dindis", "halt_towns", "routes",
+    "forecasts", "density_readings", "alerts",
     "tripwires", "cameras", "facilities", "gates", "zones", "contact_secrets",
     "audit_log", "users",
 )

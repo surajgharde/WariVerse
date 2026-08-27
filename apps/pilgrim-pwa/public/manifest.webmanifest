@@ -1,0 +1,29 @@
+{
+  "name": "वारीव्हर्स — पंढरपूर वारी",
+  "short_name": "वारीव्हर्स",
+  "description": "दर्शन पास, गर्दीची माहिती आणि आपत्कालीन मदत",
+  "lang": "mr",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FAF7F2",
+  "theme_color": "#E8622B",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "मदत हवी",
+      "short_name": "SOS",
+      "description": "तातडीची मदत मागवा",
+      "url": "/?sos=1"
+    },
+    {
+      "name": "माझा पास",
+      "short_name": "पास",
+      "url": "/?tab=pass"
+    }
+  ]
+}

@@ -255,6 +255,43 @@ async def count_passes_today(session: AsyncSession, phone_hash: str) -> int:
     )
 
 
+async def list_passes_for(session: AsyncSession, phone_hash: str, *, limit: int = 20) -> list[Pass]:
+    """Every pass belonging to one phone, newest slot first.
+
+    The pilgrim app has no pass id to ask for on a fresh install — a phone
+    reset, a reinstall, or simply a second device leaves the holder signed in
+    with nothing to show.  Their phone hash is the only durable handle they
+    have, so the list is keyed on that and never on anything stored client-side.
+    """
+    rows = await session.execute(
+        select(Pass)
+        .join(Slot, Slot.id == Pass.slot_id)
+        .where(Pass.holder_phone_hash == phone_hash)
+        .order_by(Slot.date.desc(), Slot.start_time.desc())
+        .limit(limit)
+    )
+    return list(rows.scalars())
+
+
+async def notifications_for(
+    session: AsyncSession, phone_hash: str, *, limit: int = 30
+) -> list[tuple[PassNotification, Pass]]:
+    """Queued messages about this phone's passes, newest first.
+
+    Read straight from the outbox because the notifier service does not exist
+    yet.  That is the honest interim: the row says why a pass moved and when it
+    was written, and nothing in this response claims an SMS was delivered.
+    """
+    rows = await session.execute(
+        select(PassNotification, Pass)
+        .join(Pass, Pass.id == PassNotification.pass_id)
+        .where(Pass.holder_phone_hash == phone_hash)
+        .order_by(PassNotification.created_at.desc())
+        .limit(limit)
+    )
+    return list(rows.tuples())
+
+
 async def cancel_pass(session: AsyncSession, record: Pass) -> None:
     if record.status == PassStatus.SCANNED:
         raise AppError("PASS_ALREADY_USED")

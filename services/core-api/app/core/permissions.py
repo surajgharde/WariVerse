@@ -63,6 +63,15 @@ class Permission(StrEnum):
     DINDI_VIEW = "dindi:view"
     DINDI_PING = "dindi:ping"
     DINDI_MANAGE = "dindi:manage"
+    # Confirming a halt town's water points and sanitation units is a volunteer
+    # standing in the field counting tankers, not an administrator in
+    # Pandharpur. Separating it from DINDI_MANAGE is what keeps the readiness
+    # board current; every update is audited and carries who said it.
+    HALT_READINESS_UPDATE = "halt:readiness_update"
+
+    # assistant (Section 13)
+    ASSISTANT_USE = "assistant:use"
+    ASSISTANT_REVIEW = "assistant:review"  # read the transcript log
 
     # analytics & admin
     ANALYTICS_VIEW = "analytics:view"
@@ -83,6 +92,7 @@ _PILGRIM: frozenset[Permission] = frozenset(
         Permission.INCIDENT_REPORT,
         Permission.SOS_RAISE,
         Permission.DINDI_VIEW,
+        Permission.ASSISTANT_USE,
     }
 )
 
@@ -93,6 +103,7 @@ _VOLUNTEER: frozenset[Permission] = _PILGRIM | {
     Permission.INCIDENT_VIEW,
     Permission.INCIDENT_UPDATE_LOW,
     Permission.DINDI_PING,
+    Permission.HALT_READINESS_UPDATE,
 }
 
 _SECURITY_OFFICER: frozenset[Permission] = _VOLUNTEER | {
@@ -118,6 +129,7 @@ _ADMINISTRATOR: frozenset[Permission] = _SECURITY_OFFICER | {
     Permission.ANALYTICS_EXPORT,
     Permission.AUDIT_VIEW,
     Permission.DINDI_MANAGE,
+    Permission.ASSISTANT_REVIEW,
     Permission.CAMERA_MANAGE,
     Permission.ZONE_MANAGE,
     Permission.CONFIG_MANAGE,
@@ -156,6 +168,10 @@ PRIVILEGED_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.ZONE_MANAGE,
         Permission.CONFIG_MANAGE,
         Permission.DINDI_MANAGE,
+        # Registering a Dindi writes a leader's phone number into the system,
+        # and the halt-town board is what a district administration provisions
+        # against. Both are decisions a review will want an actor against.
+        Permission.ASSISTANT_REVIEW,
     }
 )
 

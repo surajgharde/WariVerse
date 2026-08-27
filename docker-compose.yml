@@ -3,8 +3,8 @@
 #   docker compose up                  # everything
 #
 # Phase 1 ships db, redis and core-api; Phase 3 adds ai-engine; Phase 4 adds
-# admin-console.  Later phases add notifier, the pilgrim PWA and the volunteer
-# app; their blocks land as they are built.
+# admin-console; Phase 7 adds pilgrim-pwa.  Later phases add the notifier and
+# the volunteer app; their blocks land as they are built.
 
 services:
   db:
@@ -142,6 +142,73 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  pilgrim-pwa:
+    # The pilgrim app (Phase 7). Offline-first, Marathi-first, and built to a
+    # 200 KB gzipped JS budget that the image build itself enforces — see the
+    # `npm run budget` step in its Dockerfile.
+    build:
+      context: ./apps/pilgrim-pwa
+      dockerfile: Dockerfile
+    container_name: wariverse-pilgrim-pwa
+    ports:
+      - "${PILGRIM_PWA_PORT:-5174}:80"
+    depends_on:
+      core-api:
+        condition: service_started
+    restart: unless-stopped
+
+  # --- observability (Section 11, Phase 10) --------------------------------
+  # Behind a profile, so `docker compose up` stays the ten-second path the
+  # README promises and nobody pays 300 MB of Grafana to look at a pass booking.
+  # Bring it up deliberately:
+  #
+  #     docker compose --profile observability up -d
+  #
+  # Grafana on :3000 (admin/admin on first run), Prometheus on :9090.
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: wariverse-prometheus
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 30 days: long enough to answer "what did the pipeline look like during
+      # the Wari" at the post-event review, which is the only reason this data
+      # outlives the week.
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    container_name: wariverse-grafana
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      # A control room screen nobody has to log into. Viewer-only, so the board
+      # can be left up on a wall without leaving an editable Grafana unattended.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_THEME: dark
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   db_data:
   redis_data:
+  prometheus_data:
+  grafana_data:

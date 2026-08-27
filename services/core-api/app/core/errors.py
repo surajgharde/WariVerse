@@ -194,6 +194,56 @@ ERROR_CATALOG: dict[str, tuple[int, str, str]] = {
         "The evidence chain does not verify. Do not act on this ledger until it is investigated.",
         "पुराव्याची साखळी तपासणीत टिकत नाही. तपास होईपर्यंत या नोंदवहीवर कारवाई करू नका.",
     ),
+    # palkhi & dindi tracking (Phase 9, Section 4/M8)
+    #
+    # These are read by a volunteer on a road somewhere between Alandi and
+    # Pandharpur, on a phone, in Marathi. The messages say what to do next
+    # rather than what went wrong, because there is nobody beside them to ask.
+    "DINDI_NOT_FOUND": (404, "That Dindi is not registered.", "ती दिंडी नोंदवलेली नाही."),
+    "HALT_TOWN_NOT_FOUND": (404, "That halt town is not on the route.", "ते मुक्कामाचे गाव मार्गावर नाही."),
+    "ROUTE_NOT_FOUND": (404, "That route does not exist.", "तो मार्ग अस्तित्वात नाही."),
+    "DINDI_CODE_TAKEN": (
+        409,
+        "A Dindi with that code is already registered.",
+        "त्या क्रमांकाची दिंडी आधीच नोंदवलेली आहे.",
+    ),
+    "DINDI_DEVICE_MISMATCH": (
+        409,
+        "This Dindi already has a designated tracking phone. Use that phone, or ask an administrator "
+        "to move the registration to this one — two phones reporting for one Dindi puts it in two "
+        "places on the halt towns' board.",
+        "या दिंडीसाठी आधीच एक ट्रॅकिंग फोन नोंदवलेला आहे. तोच फोन वापरा, किंवा नोंदणी या फोनवर "
+        "हलवण्यासाठी प्रशासकाला सांगा — एका दिंडीसाठी दोन फोन नोंदी पाठवल्यास ती मुक्कामाच्या "
+        "गावांच्या यादीत दोन ठिकाणी दिसते.",
+    ),
+    "DINDI_INACTIVE": (
+        409,
+        "This Dindi is not walking. Ask an administrator to reactivate it before sending positions.",
+        "ही दिंडी सध्या चालत नाही. नोंदी पाठवण्यापूर्वी प्रशासकाकडून ती पुन्हा सुरू करून घ्या.",
+    ),
+    "PING_INVALID": (
+        400,
+        "That position could not be read. Check that location is switched on and try again.",
+        "ती जागा वाचता आली नाही. लोकेशन सुरू आहे का ते पाहा आणि पुन्हा प्रयत्न करा.",
+    ),
+    "SCHEDULE_INVALID": (
+        400,
+        "A halt schedule must list each town once, in walking order, with arrival times that move forward.",
+        "मुक्कामाच्या वेळापत्रकात प्रत्येक गाव एकदाच, चालण्याच्या क्रमाने आणि पुढे जाणाऱ्या वेळांसह हवे.",
+    ),
+    # assistant (Phase 9, Section 13)
+    "ASSISTANT_DISABLED": (
+        503,
+        "The assistant is switched off. The information you need is still on the main screens, "
+        "and the helpline number is on the home page.",
+        "सहाय्यक सध्या बंद आहे. तुम्हाला हवी असलेली माहिती मुख्य स्क्रीनवर आहे, आणि मदत क्रमांक "
+        "मुख्यपृष्ठावर आहे.",
+    ),
+    "ASSISTANT_RATE_LIMITED": (
+        429,
+        "That is a lot of questions in a short time. Please wait a minute.",
+        "थोड्या वेळात खूप प्रश्न विचारले आहेत. कृपया एक मिनिट थांबा.",
+    ),
 }
 
 _DEFAULT = ("INTERNAL_ERROR", 500)

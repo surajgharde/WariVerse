@@ -23,31 +23,35 @@ Guarded rather than trusted:
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import events
+from app.core import events, metrics
 from app.core.config import settings
 from app.core.db import get_session
 from app.core.deps import require_ai_service
 from app.core.errors import AppError
 from app.core.logging import get_logger
 from app.core.security import now_utc
-from app.models import Alert, Camera, Zone
+from app.models import Alert, Camera, Pass, PassStatus, Slot, Zone
 from app.schemas.breach import CrossingBatch, CrossingResult
 from app.schemas.common import ErrorResponse
 from app.schemas.crowd import (
     DensityIngest,
     EngineCamera,
     EngineConfig,
+    EngineContext,
     EngineZone,
+    ForecastIngest,
+    ForecastIngestResult,
     HeartbeatBatch,
     IngestResult,
+    SlotPressure,
 )
-from app.services import alert_service, breach_service, config_service, crowd_service
+from app.services import alert_service, breach_service, config_service, crowd_service, forecast_service, recommendations
 from app.services.calibration import Homography
 
 logger = get_logger(__name__)
@@ -137,14 +141,30 @@ async def ingest_density(
             )
         except AppError as exc:
             rejections.append({"index": index, "zone": zone.code, "reason": exc.message, **exc.details})
+            metrics.READINGS_REJECTED.labels(exc.code).inc()
             continue
 
         snapshots.append(snapshot)
         outbound.append((events.DENSITY_UPDATED, snapshot.to_json()))
 
+        # Section 11 asks for metrics per *zone pipeline*, not only per endpoint.
+        # Set here rather than collected on scrape: every value is already in
+        # hand, and a /metrics scrape must never become a database query.
+        metrics.READINGS_INGESTED.labels(snapshot.source).inc()
+        metrics.observe_zone(
+            zone_code=snapshot.zone_code,
+            density=snapshot.density,
+            person_count=snapshot.person_count,
+            stagnation_index=snapshot.stagnation_index,
+            counterflow_ratio=snapshot.counterflow_ratio,
+            confidence=snapshot.confidence,
+            age_seconds=snapshot.age_seconds,
+        )
+
         outcome = await alert_service.evaluate(session, snapshot, thresholds, at=received)
         if outcome.created and outcome.alert is not None:
             raised += 1
+            metrics.observe_alert_raised(outcome.alert.type, outcome.alert.severity)
             outbound.append((events.ALERT_RAISED, _alert_event(outcome.alert, snapshot)))
         elif outcome.refreshed and outcome.alert is not None:
             outbound.append((events.ALERT_UPDATED, _alert_event(outcome.alert, snapshot)))
@@ -196,6 +216,203 @@ def _alert_event(alert: Alert, snapshot: crowd_service.ZoneSnapshot) -> dict[str
         "recommended_action_mr": alert.recommended_action_mr,
         "observed_at": alert.observed_at,
     }
+
+
+@router.post("/forecast", response_model=ForecastIngestResult, status_code=202)
+async def ingest_forecast(
+    payload: ForecastIngest,
+    session: AsyncSession = Depends(get_session),
+) -> ForecastIngestResult:
+    """Accept a set of predictions issued at one moment (Section 4/M6).
+
+    The engine owns the model; the core API owns the claim.  Same boundary as
+    density: the AI service holds no database credentials, so a forecast reaches
+    Postgres the only way anything from that service does.
+
+    A prediction *is* allowed to be about the future — that is the whole point —
+    so unlike `/density` this route checks `issued_at` rather than the target,
+    and refuses one issued in the future for the same reason: a container with a
+    wrong clock would otherwise stamp predictions that never look stale.
+    """
+    received = now_utc()
+    skew = received - payload.issued_at
+    if skew > MAX_BACKDATE or skew < -MAX_FUTURE:
+        raise AppError(
+            "READING_REJECTED",
+            details={
+                "reason": "issued_at outside the accepted window — check the engine's clock",
+                "skew_seconds": round(skew.total_seconds(), 1),
+            },
+        )
+
+    zones = await crowd_service.load_zones(session)
+    by_code = {z.code: z for z in zones.values()}
+    thresholds = await alert_service.load_thresholds(session)
+    alert_horizon = await config_service.get_int(session, "forecast_alert_horizon_minutes")
+
+    resolved: list[forecast_service.ForecastIn] = []
+    rejections: list[dict[str, object]] = []
+    outbound: list[tuple[str, dict[str, object]]] = []
+    raised = 0
+
+    for index, item in enumerate(payload.forecasts):
+        zone: Zone | None = None
+        if item.zone_id is not None:
+            zone = zones.get(item.zone_id)
+        elif item.zone_code:
+            zone = by_code.get(item.zone_code.upper())
+
+        if zone is None:
+            rejections.append(
+                {
+                    "index": index,
+                    "zone": str(item.zone_id or item.zone_code),
+                    "reason": "unknown or inactive zone",
+                }
+            )
+            continue
+
+        resolved.append(
+            forecast_service.ForecastIn(
+                zone_id=zone.id,
+                horizon_minutes=item.horizon_minutes,
+                predicted_density=item.predicted_density,
+                interval_low=item.interval_low,
+                interval_high=item.interval_high,
+                model_version=item.model_version,
+                trained_on=item.trained_on,
+                validation_mae=item.validation_mae,
+            )
+        )
+
+        # Only the alerting horizon reaches the rule table. The rest are
+        # published for the chart and are deliberately not events.
+        if item.horizon_minutes != alert_horizon:
+            continue
+
+        signal = recommendations.ForecastSignal(
+            predicted_density=item.predicted_density,
+            interval_low=item.interval_low,
+            interval_high=item.interval_high,
+            horizon_minutes=item.horizon_minutes,
+            target_at=payload.issued_at + timedelta(minutes=item.horizon_minutes),
+            zone_name=zone.name,
+            zone_name_mr=zone.name_mr,
+        )
+        outcome = await alert_service.evaluate_forecast(
+            session,
+            signal,
+            zone.id,
+            thresholds,
+            confidence=alert_service.forecast_confidence(item.interval_low, item.interval_high),
+            at=received,
+        )
+        if outcome.created and outcome.alert is not None:
+            raised += 1
+            outbound.append((events.ALERT_RAISED, _forecast_alert_event(outcome.alert, zone)))
+        elif outcome.refreshed and outcome.alert is not None:
+            outbound.append((events.ALERT_UPDATED, _forecast_alert_event(outcome.alert, zone)))
+        for closed in outcome.resolved:
+            outbound.append((events.ALERT_UPDATED, _forecast_alert_event(closed, zone)))
+
+    accepted = await forecast_service.record(session, payload.issued_at, resolved)
+    await session.commit()
+
+    if accepted:
+        outbound.append(
+            (
+                events.FORECAST_PUBLISHED,
+                {
+                    "issued_at": payload.issued_at,
+                    "count": accepted,
+                    "horizons": sorted({f.horizon_minutes for f in resolved}),
+                    "trained_on": sorted({f.trained_on for f in resolved}),
+                },
+            )
+        )
+    await events.publish_many(outbound)
+
+    if rejections:
+        logger.warning("forecast_partial", extra={"accepted": accepted, "rejected": len(rejections)})
+
+    return ForecastIngestResult(
+        accepted=accepted,
+        rejected=len(rejections),
+        alerts_raised=raised,
+        rejections=rejections[:20],
+        received_at=received,
+    )
+
+
+def _forecast_alert_event(alert: Alert, zone: Zone) -> dict[str, object]:
+    """A forecast alert on the wire.
+
+    Same shape as `_alert_event` so the console's alert feed needs no second
+    code path, but built from the zone rather than a snapshot — there is no
+    density reading behind a forecast alert, which is precisely its value.
+    """
+    return {
+        "alert_id": str(alert.id),
+        "type": alert.type,
+        "severity": alert.severity,
+        "status": alert.status,
+        "rule_id": alert.rule_id,
+        "zone_id": str(zone.id),
+        "zone_code": zone.code,
+        "zone_name_mr": zone.name_mr,
+        "trigger_metric": alert.trigger_metric,
+        "trigger_value": alert.trigger_value,
+        "threshold_value": alert.threshold_value,
+        "confidence": alert.confidence,
+        "recommended_action": alert.recommended_action,
+        "recommended_action_mr": alert.recommended_action_mr,
+        "observed_at": alert.observed_at,
+    }
+
+
+@router.get("/context", response_model=EngineContext)
+async def engine_context(session: AsyncSession = Depends(get_session)) -> EngineContext:
+    """Forecast features that live in this database, not the engine's memory.
+
+    Section 4/M6 lists "active pass bookings for upcoming slots" as a feature.
+    The engine cannot query for it — it holds no database credentials, and that
+    boundary is worth more than the convenience of relaxing it — so the number
+    comes to the engine instead.
+
+    `unavailable_features` names the listed inputs this deployment cannot supply,
+    so the engine records what it is running without rather than silently
+    treating a missing input as a zero.  A model that reads "no Palkhi arriving"
+    when the truth is "we do not track the Palkhi yet" is a model that will be
+    confidently wrong on the one day it matters.
+    """
+    now = now_utc()
+    horizon = now + timedelta(hours=4)
+
+    rows = await session.execute(
+        select(Slot.date, Slot.start_time, func.coalesce(func.sum(Pass.group_size), 0))
+        .outerjoin(Pass, (Pass.slot_id == Slot.id) & (Pass.status == PassStatus.ACTIVE))
+        .where(Slot.date >= now.date())
+        .group_by(Slot.date, Slot.start_time)
+        .order_by(Slot.date, Slot.start_time)
+    )
+
+    slots: list[SlotPressure] = []
+    for day, start_time, booked in rows:
+        starts_at = datetime.combine(day, start_time, tzinfo=UTC)
+        if starts_at < now or starts_at > horizon:
+            continue
+        slots.append(SlotPressure(starts_at=starts_at, booked_persons=int(booked)))
+
+    return EngineContext(
+        slots=slots,
+        unavailable_features=[
+            # Both are named in Section 4/M6's feature list and neither has a
+            # source in this system today. Named rather than omitted.
+            "palkhi_eta (Phase 9 — Dindi tracking is not built)",
+            "weather (no weather feed is configured)",
+        ],
+        generated_at=now,
+    )
 
 
 @router.post("/heartbeat", response_model=dict[str, int], status_code=202)

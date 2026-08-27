@@ -273,3 +273,49 @@ def sha256_hex(data: bytes) -> str:
 
 def urlsafe_token(nbytes: int = 32) -> str:
     return base64.urlsafe_b64encode(secrets.token_bytes(nbytes)).decode("ascii").rstrip("=")
+
+
+# --------------------------------------------------------------------------
+# capability links
+# --------------------------------------------------------------------------
+#: Domain separation.  A capability link must never be mistakable for an access
+#: token even if one of them is ever fed to the wrong verifier.
+_CARD_LINK_CONTEXT = b"wariverse-pass-card-v1"
+
+
+def _card_link_key() -> bytes:
+    return hashlib.blake2b(settings.jwt_secret.encode("utf-8"), salt=b"card-link", digest_size=32).digest()
+
+
+def sign_card_link(subject: str, expires_at: datetime) -> str:
+    """Sign a bearer-in-a-URL for one pass's no-JavaScript card page.
+
+    A URL, not a header, because the page it opens has to work in a browser with
+    JavaScript switched off or broken — and such a browser cannot attach an
+    `Authorization` header to a link.  The trade is real: anyone holding the URL
+    holds the pass.  It is accepted because the pass it exposes is single-scan
+    and its rolling code is only good for sixty seconds, so a leaked link buys
+    an attacker the same thing a photograph of the screen would, and no more.
+
+    Scoped to one pass and stamped with an expiry that the signature covers, so
+    neither can be edited by the holder.
+    """
+    stamp = str(int(expires_at.timestamp()))
+    body = f"{subject}.{stamp}".encode()
+    mac = hmac.new(_card_link_key(), _CARD_LINK_CONTEXT + body, hashlib.sha256).digest()
+    tag = base64.urlsafe_b64encode(mac[:16]).decode("ascii").rstrip("=")
+    return f"{stamp}.{tag}"
+
+
+def verify_card_link(subject: str, token: str) -> None:
+    """Raise unless `token` is this pass's own unexpired link."""
+    stamp, _, tag = (token or "").partition(".")
+    if not stamp or not tag:
+        raise AppError("TOKEN_INVALID", details={"reason": "malformed card link"})
+
+    expected = sign_card_link(subject, datetime.fromtimestamp(int(stamp), tz=UTC)) if stamp.isdigit() else ""
+    if not expected or not hmac.compare_digest(expected, f"{stamp}.{tag}"):
+        raise AppError("TOKEN_INVALID", details={"reason": "card link signature"})
+
+    if datetime.fromtimestamp(int(stamp), tz=UTC) <= now_utc():
+        raise AppError("TOKEN_EXPIRED", details={"reason": "card link expired"})

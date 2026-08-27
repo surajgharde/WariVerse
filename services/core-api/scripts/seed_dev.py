@@ -311,6 +311,150 @@ async def seed_responders(session: AsyncSession) -> int:
     return created
 
 
+# --- Palkhi route (Section 4/M8, Phase 9) ----------------------------------
+# The real Sant Dnyaneshwar Maharaj Palkhi road, Alandi to Pandharpur: about
+# 250 km over 18 days. The halt towns and their order are the actual ones; the
+# coordinates are town centres rather than surveyed camp polygons, which is
+# what `halt_towns.geom` is for once a district has digitised them.
+#
+# Seeded because the halt-town readiness board is unreadable with no route
+# behind it — an empty board and a working board look identical, and the first
+# thing anybody does with this module is open it.
+WARI_ROUTE = ("Sant Dnyaneshwar Maharaj Palkhi", "संत ज्ञानेश्वर महाराज पालखी", "Alandi", 250.0)
+
+#: (name, name_mr, lon, lat, day_offset) in walking order. Day offsets are the
+#: traditional schedule; the year's actual dates move with Ashadhi Ekadashi.
+HALT_TOWNS = [
+    ("Alandi", "आळंदी", 73.8977, 18.6773, 0),
+    ("Pune", "पुणे", 73.8567, 18.5204, 2),
+    ("Saswad", "सासवड", 74.0333, 18.3500, 4),
+    ("Jejuri", "जेजुरी", 74.1600, 18.2769, 5),
+    ("Valha", "वाल्हे", 74.1833, 18.1667, 6),
+    ("Lonand", "लोणंद", 74.1833, 17.9833, 7),
+    ("Taradgaon", "तरडगाव", 74.2333, 17.8833, 8),
+    ("Phaltan", "फलटण", 74.4333, 17.9833, 9),
+    ("Barad", "बरड", 74.6000, 17.8000, 10),
+    ("Natepute", "नातेपुते", 74.8000, 17.9000, 11),
+    ("Malshiras", "माळशिरस", 74.9167, 17.8500, 12),
+    ("Velapur", "वेळापूर", 75.0500, 17.8000, 13),
+    ("Bhandishegaon", "भंडीशेगाव", 75.1500, 17.7500, 14),
+    ("Wakhari", "वाखरी", 75.2833, 17.7000, 15),
+    ("Pandharpur", "पंढरपूर", 75.3306, 17.6797, 16),
+]
+
+#: (code, name, name_mr, leader, phone, expected_count) — four Dindis, sized
+#: the way real ones are: a few hundred walkers each, not thousands.
+DINDIS = [
+    ("DND-001", "Sant Tukaram Dindi", "संत तुकाराम दिंडी", "Ramesh Pawar", "9822010001", 420),
+    ("DND-002", "Vitthal Bhakti Dindi", "विठ्ठल भक्ती दिंडी", "Sunita Jadhav", "9822010002", 260),
+    ("DND-003", "Jnaneshwar Mauli Dindi", "ज्ञानेश्वर माऊली दिंडी", "Anil Deshmukh", "9822010003", 810),
+    ("DND-004", "Rukmini Dindi", "रुक्मिणी दिंडी", "Kavita Shinde", "9822010004", 150),
+]
+
+
+async def seed_wari_route(session: AsyncSession) -> tuple[int, int, int]:
+    """Route, halt towns and Dindis with a schedule (Section 4/M8).
+
+    Halt towns are seeded with *deliberately uneven* provisioning: some ready,
+    some short, one claiming ready without the water to back it. The readiness
+    board's most important feature is the disagreement between what a town
+    declared and what its numbers support, and a seed where every town is
+    perfectly stocked demonstrates the boring case.
+    """
+    from datetime import timedelta
+
+    from app.models import Dindi, DindiScheduleStop, HaltTown, Route
+    from app.services.palkhi_service import store_leader_contact
+
+    name, name_mr, origin, total_km = WARI_ROUTE
+    route = await session.scalar(select(Route).where(Route.name == name))
+    if route is None:
+        path = ", ".join(f"{lon} {lat}" for _n, _m, lon, lat, _d in HALT_TOWNS)
+        route = Route(
+            name=name,
+            name_mr=name_mr,
+            origin=origin,
+            path=f"SRID=4326;LINESTRING({path})",
+            total_km=total_km,
+            year=2026,
+        )
+        session.add(route)
+        await session.flush()
+
+    # Day 0 is the departure from Alandi. Anchored to today so the board has
+    # something in its 36-hour window on a first run rather than a route whose
+    # every arrival is in the past.
+    day_zero = now_utc().replace(hour=6, minute=0, second=0, microsecond=0) - timedelta(days=4)
+
+    towns: list[HaltTown] = []
+    created_towns = 0
+    for index, (town_name, town_mr, lon, lat, day) in enumerate(HALT_TOWNS, start=1):
+        town = await session.scalar(select(HaltTown).where(HaltTown.name == town_name))
+        if town is None:
+            # Uneven on purpose — see the docstring. Every fourth town is short
+            # of water, and every fifth declares itself ready anyway.
+            water = 0 if index % 4 == 0 else 6
+            declared = "ready" if index % 5 == 0 else ("partial" if water else "not_ready")
+            town = HaltTown(
+                name=town_name,
+                name_mr=town_mr,
+                route_id=route.id,
+                sequence=index,
+                centroid=f"SRID=4326;POINT({lon} {lat})",
+                expected_arrival=day_zero + timedelta(days=day, hours=12),
+                water_points=water,
+                sanitation_units=0 if index % 4 == 0 else 14,
+                medical_camps=0 if index % 4 == 0 else 1,
+                readiness_status=declared,
+                readiness_note="development seed — replace with a surveyed count",
+            )
+            session.add(town)
+            created_towns += 1
+        towns.append(town)
+    await session.flush()
+
+    created_dindis = 0
+    created_stops = 0
+    for offset, (code, dname, dname_mr, leader, phone, count) in enumerate(DINDIS):
+        dindi = await session.scalar(select(Dindi).where(Dindi.code == code))
+        if dindi is not None:
+            continue
+        dindi = Dindi(
+            code=code,
+            name=dname,
+            name_mr=dname_mr,
+            leader_name=leader,
+            leader_phone_hash=await store_leader_contact(session, phone, at=now_utc()),
+            expected_count=count,
+            route_id=route.id,
+            status="walking",
+            started_at=day_zero,
+            is_active=True,
+        )
+        session.add(dindi)
+        await session.flush()
+        created_dindis += 1
+
+        # Each Dindi walks the same road a couple of hours apart, which is how
+        # the Wari actually moves and what makes a halt town's head count the
+        # sum of several groups rather than one.
+        for index, (town, (_n, _m, _lon, _lat, day)) in enumerate(zip(towns, HALT_TOWNS, strict=True), start=1):
+            session.add(
+                DindiScheduleStop(
+                    dindi_id=dindi.id,
+                    halt_town_id=town.id,
+                    sequence=index,
+                    planned_arrival=day_zero + timedelta(days=day, hours=12 + offset * 2),
+                    planned_departure=day_zero + timedelta(days=day + 1, hours=6 + offset * 2),
+                    expected_count=count,
+                )
+            )
+            created_stops += 1
+
+    await session.flush()
+    return created_towns, created_dindis, created_stops
+
+
 async def main() -> None:
     async with SessionFactory() as session:
         users = await seed_users(session)
@@ -320,6 +464,7 @@ async def main() -> None:
         calibrated = await seed_calibration(session, zones)
         facilities = await seed_facilities(session, zones)
         responders = await seed_responders(session)
+        halt_towns, dindis, stops = await seed_wari_route(session)
         await session.commit()
 
     print("WariVerse development seed complete")
@@ -332,6 +477,7 @@ async def main() -> None:
     print(f"  cameras    +{cameras}  ({calibrated} calibrated)")
     print(f"  facilities +{facilities}")
     print(f"  responders +{responders}")
+    print(f"  halt towns +{halt_towns}  dindis +{dindis}  schedule stops +{stops}")
     print()
     print("Staff sign-in (POST /api/v1/auth/login):")
     for phone, name, role in STAFF:

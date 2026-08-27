@@ -75,4 +75,30 @@ DEFAULT_CONFIG: dict[str, tuple[Any, str]] = {
     "crowd_window_seconds": (10, "Aggregation window the AI engine reports on."),
     "crowd_sample_fps": (2.0, "Frames per second sampled from each stream."),
     "sim_baseline_multiplier": (1.0, "Scales the simulation engine's diurnal baseline."),
+    # Phase 8 — forecasting.  Note what is *not* here, again: the density bands
+    # a forecast is classified against.  A predicted 4.2 p/m² is HIGH for the
+    # same published reason a measured 4.2 is, and neither is editable.
+    "forecast_interval_seconds": (300, "How often the engine publishes a new set of forecasts."),
+    "forecast_stale_seconds": (900, "A forecast older than this is reported unavailable rather than shown."),
+    "forecast_retention_days": (30, "How long forecasts are kept for scoring against what happened."),
+    "forecast_alert_horizon_minutes": (60, "The only horizon allowed to raise a forecast_high alert."),
+    # Phase 9 — Palkhi tracking.  The halt-town provisioning ratios *are* here,
+    # unlike the density bands, and the difference is worth stating: a density
+    # band is a published crowd-safety limit, while "one water point per 250
+    # walkers" is a planning convention a district administration will adjust.
+    # The readiness board prints the ratio it used, so changing one shows up in
+    # the output rather than hiding behind it.
+    "dindi_deviation_minutes": (45, "Schedule deviation that notifies the next halt town (Section 4/M8)."),
+    "dindi_ping_interval_seconds": (60, "How often a Dindi's designated device should report."),
+    "dindi_signal_lost_minutes": (20, "No ping for this long and the Dindi reads as signal_lost, not walking."),
+    "dindi_pace_window_minutes": (90, "Window the walking pace is averaged over."),
+    "dindi_off_route_alert_m": (500, "Distance from the route line that means the group has left the route."),
+    "dindi_halt_arrival_radius_m": (800, "Distance from a halt town centre that counts as arrival."),
+    "halt_water_points_per_1000": (4.0, "Water points per 1000 expected pilgrims (1 per 250)."),
+    "halt_sanitation_units_per_1000": (10.0, "Sanitation units per 1000 expected pilgrims (1 per 100)."),
+    "halt_medical_camps_per_10000": (1.0, "Medical camps per 10000 expected pilgrims at a halt town."),
+    # Phase 9 — assistant (Section 13).
+    "assistant_enabled": (True, "Master switch for the pilgrim assistant."),
+    "assistant_max_turns_per_hour": (30, "Per-session turn ceiling."),
+    "assistant_turn_retention_days": (90, "How long assistant transcripts are kept for review."),
 }

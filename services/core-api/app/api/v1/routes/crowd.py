@@ -27,7 +27,6 @@ from app.core.errors import AppError
 from app.core.permissions import Permission
 from app.core.security import now_utc
 from app.models import Camera, Zone
-from app.models.crowd import DensityLevel
 from app.schemas.common import ErrorResponse
 from app.schemas.crowd import (
     CrowdLive,
@@ -46,34 +45,13 @@ from app.services.crowd_service import ZoneSnapshot
 
 router = APIRouter(tags=["crowd"], responses={404: {"model": ErrorResponse}})
 
-#: Pilgrim-facing guidance per band.  Marathi is the operational text; the
-#: English is the translation.  Note that none of these say "safe" — the safest
-#: band says "comfortable", because a crowd is never a guarantee.
-_ADVICE: dict[DensityLevel, tuple[str, str]] = {
-    DensityLevel.SAFE: (
-        "Comfortable. You can walk at a normal pace.",
-        "आरामदायी. तुम्ही सामान्य गतीने चालू शकता.",
-    ),
-    DensityLevel.MODERATE: (
-        "Busy, but moving. Keep children and elders close to you.",
-        "गर्दी आहे पण रांग चालू आहे. मुलांना आणि वृद्धांना जवळ ठेवा.",
-    ),
-    DensityLevel.HIGH: (
-        "Very crowded. If you can wait or take another route, do that.",
-        "खूप गर्दी आहे. शक्य असल्यास थांबा किंवा दुसऱ्या मार्गाने जा.",
-    ),
-    DensityLevel.CRITICAL: (
-        "Do not enter this area. Stay where you are and follow the volunteers' instructions.",
-        "या भागात जाऊ नका. आहात तिथेच थांबा आणि स्वयंसेवकांच्या सूचना पाळा.",
-    ),
-}
-
-#: The most important string in this file.  An unknown zone must never render
-#: like a clear one — that is precisely how someone walks into a crush.
-_UNKNOWN_ADVICE = (
-    "No live reading for this area right now. Treat it as unknown, not as clear, and follow the volunteers.",
-    "या भागाची सध्याची माहिती उपलब्ध नाही. ते मोकळे आहे असे समजू नका; स्वयंसेवकांच्या सूचना पाळा.",
-)
+#: Pilgrim-facing guidance per band, and the string for a zone with no reading.
+#: They live in `crowd_service` rather than here because Phase 9's assistant
+#: answers "how crowded is the east corridor" from the same table — an assistant
+#: that composed its own wording for a CRITICAL zone would be a language model
+#: writing a crowd-safety instruction, which Section 13 forbids outright.
+_ADVICE = crowd_service.PUBLIC_ADVICE
+_UNKNOWN_ADVICE = crowd_service.UNKNOWN_ADVICE
 
 _PUBLIC_NOTICE = (
     "Crowd levels are estimates from anonymous counting. No individual is identified or tracked.",

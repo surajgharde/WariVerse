@@ -1,0 +1,15 @@
+apiVersion: 1
+
+providers:
+  - name: wariverse
+    orgId: 1
+    folder: WariVerse
+    type: file
+    disableDeletion: false
+    # Reloaded from disk every 30s, so editing the JSON in the repo and saving
+    # is the edit loop — not clicking in the UI and forgetting to export.
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

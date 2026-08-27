@@ -17,45 +17,89 @@ exists to make that safer, fairer and legible — without surveilling anyone.
 
 ## Run it
 
-Requires Docker and Docker Compose. Ten commands, start to working API.
+> ### No API keys. No paid services. No accounts.
+>
+> The entire system — every module, the full demo — runs with **zero external
+> accounts and zero keys**. Not a trimmed-down mode: the whole thing.
+>
+> | What you might expect to need | What is actually used |
+> | --- | --- |
+> | A cloud vision API | Built-in **simulation engine** (`CROWD_SOURCE=sim`, the default). No cameras, no GPU. Swap in your own RTSP URLs later. |
+> | A map key (Mapbox / MapTiler) | **MapLibre drawing our own zone polygons.** No tile CDN — a control room during the Wari is exactly where a map that blocks on a tile server fails. |
+> | An SMS gateway | **None.** `OTP_DEBUG_ECHO=true` returns the code in the API response for development. |
+> | A push-notification key | **None.** Not used. |
+> | A hosted database | **Self-hosted** Postgres + Redis via `docker compose`. |
+>
+> The **one optional** external key is `GEMINI_API_KEY` for the AI assistant,
+> which has a **free tier** ([Google AI Studio](https://aistudio.google.com/apikey),
+> no card required). Leave it blank and the assistant still answers — from the
+> same five read-only tools, with templated Marathi/English sentences instead of
+> fluent prose. The *facts are identical either way*, because both paths read
+> the same data.
+
+Requires Docker and Docker Compose. **One file, one command:**
 
 ```bash
 git clone <repo> && cd wariverse
-
-cp .env.example .env                      # 1. create local config
-python - <<'PY'                           # 2. generate real dev secrets
-import base64, secrets, pathlib
-p = pathlib.Path(".env"); t = p.read_text()
-t = t.replace("dev-only-jwt-secret-change-me-0000000000000000", secrets.token_urlsafe(48))
-t = t.replace("dev-only-phone-hash-secret-change-me-000000", secrets.token_urlsafe(48))
-t = t.replace("dev-only-ai-service-token-change-me", secrets.token_urlsafe(24))
-t = t.replace("CONTACT_ENCRYPTION_KEY=", "CONTACT_ENCRYPTION_KEY=" + base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())
-p.write_text(t)
-PY
-
-docker compose up -d db redis             # 3. Postgres (Timescale+PostGIS) + Redis
-docker compose up -d --build core-api     # 4. API; migrations run on boot
-
-curl localhost:8000/health/deep           # 5. everything should read "ok"
-docker compose exec core-api python scripts/seed_dev.py   # 6. demo data
-open http://localhost:8000/docs           # 7. interactive API
+python run.py
 ```
+
+That is the whole setup. `run.py` checks prerequisites, generates `.env` with
+fresh local secrets, builds and starts every service, waits for migrations,
+loads demo data, and prints every URL and login at the end.
+
+```bash
+python run.py                    # start everything
+python run.py --observability    # also start Prometheus + Grafana
+python run.py --status           # what is running, and is it healthy
+python run.py --logs core-api    # follow one service
+python run.py --stop             # stop, keep the data
+python run.py --reset            # destroy the data, start clean
+python run.py --gemini-key KEY   # optional free AI Studio key
+```
+
+<details>
+<summary>Or do it by hand</summary>
+
+```bash
+# 1. Generate .env with real, locally-created secrets.
+#    Writes the file itself — on Windows a `> .env` redirect produces cp1252,
+#    which the app (which reads .env as UTF-8) then refuses to parse.
+python services/core-api/scripts/gen_env.py
+#    Optional: --gemini-key YOUR_FREE_KEY   --production
+
+docker compose up -d db redis             # 2. Postgres (Timescale+PostGIS) + Redis
+docker compose up -d --build core-api     # 3. API; migrations run on boot
+
+curl localhost:8000/health/deep           # 4. everything should read "ok"
+docker compose exec core-api python scripts/seed_dev.py   # 5. demo data
+open http://localhost:8000/docs           # 6. interactive API
+```
+
+</details>
+
+`gen_env.py` generates all five secrets the system needs, including a **valid
+Fernet key** for `CONTACT_ENCRYPTION_KEY`. That one is not an arbitrary string:
+a plausible-looking placeholder decodes to the wrong length and Fernet rejects
+it, which stays invisible until the first time something encrypts — registering
+a Dindi, or an SOS with a callback number. Mid-demo is the worst moment to find
+that out.
 
 Then try the pilgrim sign-in end to end — no SMS gateway needed in development,
 because `OTP_DEBUG_ECHO=true` returns the code:
 
 ```bash
-# 8. request a code
+# 7. request a code
 curl -s -X POST localhost:8000/api/v1/auth/otp/request \
      -H 'content-type: application/json' -d '{"phone":"9876543210"}'
 # -> {"sent":true,"expires_in":300,"debug_code":"483920"}
 
-# 9. verify it and get tokens
+# 8. verify it and get tokens
 curl -s -X POST localhost:8000/api/v1/auth/otp/verify \
      -H 'content-type: application/json' \
      -d '{"phone":"9876543210","code":"483920","name":"रुक्मिणी","language":"mr"}'
 
-# 10. use the access token
+# 9. use the access token
 curl -s localhost:8000/api/v1/auth/me -H "authorization: Bearer <access_token>"
 ```
 
@@ -133,10 +177,10 @@ cd apps/admin-console  && npm install && npm test
 | 4 | M3 Command Center — live map, alert feed, KPIs, replay scrubber | **done** |
 | 5 | M4 Incidents & SOS — dispatch, SLA, missing persons | **done** |
 | 6 | M5 Queue breach ledger — tripwires, hash chain, review flow | **done** |
-| 7 | M7 Pilgrim PWA — offline-first, Marathi | not started |
-| 8 | M6 Forecasting — LightGBM, intervals, recommendation rules | not started |
-| 9 | M8 Palkhi tracking + Gemini assistant | not started |
-| 10 | Hardening — load test, runbook, DPIA, observability | not started |
+| 7 | M7 Pilgrim PWA — offline-first, Marathi | **done** |
+| 8 | M6 Forecasting — LightGBM, intervals, recommendation rules | **done** |
+| 9 | M8 Palkhi tracking + Gemini assistant | **done** |
+| 10 | Hardening — load test, runbook, DPIA, observability | **done**, except the restore drill has not been *run* — see [Phase 10](#phase-10-in-detail) |
 
 The schema in `services/core-api/app/models/` covers every table the later
 phases need, so migrations do not churn as modules land.
@@ -467,6 +511,173 @@ the vision pipeline.
 choice above. It is the third such flag in this repo and follows the same rule
 as the other two: where the literal instruction and its stated purpose disagree,
 serve the purpose and say so.
+
+### Phase 9 in detail
+
+Two modules that have nothing in common except that they both land here: Palkhi
+tracking (Section 4/M8) and the pilgrim assistant (Section 13).
+
+```bash
+# with the stack up and seeded — the Wari route, 15 halt towns, 4 Dindis
+curl -s localhost:8000/api/v1/halt-towns -H "authorization: Bearer <token>" | jq '.towns[0].readiness'
+curl -s localhost:8000/api/v1/dindis     -H "authorization: Bearer <token>" | jq '{reporting, silent}'
+```
+
+#### Palkhi & Dindi tracking
+
+The Wari is 250 km over 18 days; every other module in this product is about the
+last day of it. This one is about the other seventeen.
+
+- **A Dindi is a group, not a person.** One designated volunteer phone reports
+  for a few hundred walkers. Nothing here tracks an individual and nothing here
+  should ever be refined into doing so — that is what makes an 18-day location
+  system deployable under the DPDP Act at all. A second phone reporting for the
+  same Dindi is *refused*, because a Palkhi in two places on a board that halt
+  towns provision against is worse than no position.
+- **The reporting interval is battery-aware, and the server sets it.** The phone
+  knows its battery; only the server knows the group is halted for the night
+  with six days of walking left to power. 60s at full charge, backing off to ten
+  minutes at 25% and fifteen at 10%. A phone that reports every minute until it
+  dies on day eleven tells the halt towns nothing for the remaining week.
+- **Pace is displacement over 90 minutes, projected onto the route line** — not
+  the GPS `speed` field, which reports the speed of the volunteer carrying the
+  phone and spikes when he jogs to catch up. And it is first-to-last, not an
+  average of legs: a group that walked an hour then stopped for lunch has
+  covered 2.5 km in two hours, which is what the halt town needs to hear.
+- **An unusable pace produces no ETA at all.** Not a default 3 km/h. A halt town
+  cannot distinguish a guessed arrival time from a measured one once it is a
+  time on a screen, and it will staff the kitchen for both the same way. A Dindi
+  whose phone has gone quiet shows `eta: null` and a `signal_lost` status.
+- **Early is treated as more dangerous than late.** Section 4/M8 asks for a
+  45-minute deviation alert; the rules split it by sign. Late means food going
+  cold. Early means five hundred people walking into a town whose water tankers
+  have not arrived — so a confident early arrival at a town that is *not* marked
+  ready is the one CRITICAL rule in the table (R-M8-01).
+- **The readiness board reports two statuses, and their disagreement.**
+  `declared` is what a coordinator typed in; `computed` is what the provisioning
+  supports against the head count the town's own schedule says is walking
+  towards it. A town marked ready with water for half the arrivals is exactly
+  the failure this module exists to catch, and one merged status would hide it.
+  The board prints the ratios it used.
+- **Volunteers update readiness, not administrators.** The person who can say
+  how many tankers are standing in Saswad is standing in Saswad. Routing that
+  through an administrator in Pandharpur is how a board goes stale, and a stale
+  readiness board is worse than none. Every update stamps who and when.
+- **The leader's phone number has its own audited endpoint.** Two of the M8
+  rules end in "call the Dindi leader", so it cannot be withheld. What it can be
+  is never read without a record — the same treatment breach evidence gets. The
+  number is HMAC'd on the row and encrypted in `contact_secrets`; it appears in
+  no list response.
+
+#### The Gemini assistant
+
+Section 13 gives the assistant a deliberately narrow contract. Most of it is
+enforced structurally rather than by asking a model nicely.
+
+- **The tool list is the control.** Five read-only tools —
+  `get_pass_status`, `get_zone_crowd`, `find_nearest_facility`, `get_schedule`,
+  `raise_sos_draft`. There is no `cancel_pass`, no `set_threshold`, no
+  `dispatch_unit`, so no prompt, injection or model error can reach one. A
+  refusal that depends on the model choosing to refuse is not a control.
+- **`raise_sos_draft` drafts. It does not send.** A language model must not be
+  able to put a row in a control room's alarm queue — and equally must not be
+  the thing that decides an alarm is unnecessary. It helps a frightened person
+  put words in a box, says loudly that nothing has been sent, and a human
+  presses the button.
+- **Emergencies are redirected before a model is involved.** "My father has
+  collapsed" is caught by a keyword triage pass and answered with 108, the SOS
+  button and one instruction. Not a refusal: a refusal is a dead end to a person
+  in the worst minute of their life.
+- **Every factual claim comes from a tool call in that turn.** When a tool
+  returns nothing the answer is "I don't know" plus the helpline. Section 13:
+  *never fabricate a wait time — a wrong number here sends a person into a crowd
+  at the wrong moment.*
+- **It cannot see more than `/crowd/public` does.** Bands and the official
+  advice sentence, never a head count or a density figure. An assistant that
+  could see more would be a way around Section 12 that happens to speak Marathi.
+  The advice sentences are quoted from `crowd_service.PUBLIC_ADVICE`, so the
+  model translates a safety instruction and never writes one.
+- **It runs without a model.** With no `GEMINI_API_KEY`, on a timeout, or on a
+  lapsed billing account, a keyword router answers from the same five tools with
+  templated bilingual sentences and logs the turn as `degraded`. That path runs
+  in every CI run and every demo, which makes it the one most likely to be live
+  on any given day — so it is built as a real answer, not a stub. It looks
+  plainly templated on purpose: a degraded mode indistinguishable from the
+  working one is a degraded mode nobody notices has been running for three days.
+- **Every turn is logged with its tool calls**, with phone-number-shaped digit
+  runs stripped from the question first. Section 13 wants the transcript;
+  Section 12 wants no PII accumulated. Both are satisfiable — the shape of the
+  question is what a reviewer needs, the digits are what the DPDP Act is about.
+  Reading the transcript is itself audited, and it is purged on a 90-day clock.
+
+### Phase 10 in detail
+
+Hardening (Sections 11 and 12). Five deliverables; four are done and one is
+written but unperformed, which is called out below rather than rounded up.
+
+```bash
+# the observability stack, behind a profile so `docker compose up` stays fast
+docker compose --profile observability up -d
+# Grafana :3000  ->  "Can we still see the Wari?"     Prometheus :9090
+```
+
+- **Metrics per zone pipeline, not just per endpoint.** Phase 1 already exported
+  request counts and latency, which answers *is the API healthy*. Section 11
+  also asks for per-zone-pipeline metrics, which answer a different question —
+  *is the system still seeing the Wari* — and those two can disagree. A green
+  API over forty dark cameras is the failure `app/core/metrics.py` exists to
+  make visible. Every value is set at the point the data already flows (ingest,
+  camera watchdog, Palkhi sweep), so a `/metrics` scrape never becomes a
+  database query: turning monitoring into load is exactly wrong on the day the
+  system is under strain.
+- **Gauges go stale on purpose.** Nothing resets them on a timer. When the AI
+  engine dies, `wariverse_zone_reading_age_seconds` climbs without limit and the
+  alert fires on the *age*, never the density. A metric that reset to zero when
+  its feed died would render an unmeasured zone as an empty one — the same lie
+  the Redis TTL prevents.
+- **Alert rules alert on blindness, never on busyness.** `wariverse_zone_density`
+  appears in no rule; reading-age appears in two. A dense zone is Tuesday of the
+  Wari and the product already routes it to an operator with a recommended
+  action. Paging an engineer for it would train them to silence the pager that
+  also tells them the cameras went dark. Section 11's named alert — camera
+  heartbeat loss > 2 min — is `CameraHeartbeatLost`.
+- **The load test's real assertion is oversubscription.** "Must queue, not
+  collapse" is not "no errors": a full slot answering `409 SLOT_FULL` to 19,000
+  of 20,000 phones is the system working, and counting refusals as failures is
+  how a load test gets tuned until it is green and meaningless. What *would* be
+  a failure is confirming more seats than a slot holds — and that is invisible
+  from the response side, because every overbooking request returns 201. So
+  `infra/locust/check_oversubscription.py` reads the ledger directly and checks
+  three invariants, including that online booking never ate into the walk-in
+  reserve (E1 — a race condition must not price out pilgrims without
+  smartphones).
+- **The runbook leads with what still works.** `docs/runbook.md`. When the AI
+  service dies, passes, scanning, SOS, incidents and the breach ledger are all
+  unaffected — so the first instruction is *do not take anything else down*.
+  The manual mode is radio reporting from zone marshals, and there is
+  deliberately **no manual-entry field** in the console: a typed-in density
+  would be indistinguishable from a measured one on every downstream screen.
+- **The DPIA's main finding is a list of absences.** `docs/privacy-dpia.md`. No
+  biometrics, no cross-camera re-identification, no persisted video outside the
+  10-second breach clip, no raw phone number on any entity row. These are not
+  controls that can be misconfigured — they are things that do not exist, which
+  is what makes deployment by a temple trust possible at all. It also carries
+  six ⚠️ findings that need a named human, two of them blocking (a Data
+  Protection Officer and written Marathi consent from designated Dindi
+  volunteers). `docs/signage.md` has the CCTV boards in Marathi, Hindi and
+  English, and the consent copy.
+- **Backup is snapshot + PITR, and the drill checks the hash chain.**
+  `docs/backup-restore.md`. The interesting assertion in `restore-drill.sh` is
+  not that the dump restores — it is that the restored breach ledger still
+  verifies. A backup path that silently corrupted evidence would defeat the
+  ledger's entire purpose without anyone noticing.
+
+**Not done:** Section 11 requires the restore drill to be "actually performed
+once", and it has not been. The scripts are written and syntax-checked, and both
+database trigger names were verified against migration `0003` — but no drill has
+run, because the development machine ran out of disk during this phase and
+stopped Postgres. The drill log in `docs/backup-restore.md` is empty and says so.
+It is not done until there is a row in it.
 
 ---
 

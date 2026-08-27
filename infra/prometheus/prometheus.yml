@@ -1,0 +1,53 @@
+# Prometheus scrape configuration (Section 11 OBSERVABILITY, Phase 10).
+#
+# Two jobs, and the second one is the point. `core-api` tells you the API is
+# serving requests. `wariverse-pipeline` is the same endpoint read for a
+# different question — is the system still SEEING the Wari — because those two
+# can disagree, and a green API over a blind control room is the failure this
+# whole file exists to make visible.
+#
+# Scrape interval is 15s rather than the 60s default. The camera-heartbeat
+# alert in alerts.yml has to fire inside two minutes (Section 11), and an alert
+# with a `for: 2m` clause on a 60s scrape has four samples of resolution to
+# decide something that gets a control room told a corridor has gone dark.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    deployment: wariverse
+    site: pandharpur
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        # Left empty on purpose for the development stack. A deployment points
+        # this at its own Alertmanager; wiring a placeholder here would produce
+        # a system that looks alerted and pages nobody.
+        - targets: []
+
+scrape_configs:
+  - job_name: core-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["core-api:8000"]
+        labels:
+          service: core-api
+
+  # The AI engine exposes its own pipeline counters (frames sampled, detector
+  # latency). It is scraped separately so that its death is visible as a target
+  # going down, not merely as core-api's zone gauges going stale.
+  - job_name: ai-engine
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["ai-engine:8100"]
+        labels:
+          service: ai-engine
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

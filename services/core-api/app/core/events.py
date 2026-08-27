@@ -40,14 +40,30 @@ CAMERA_STATUS_CHANGED = "camera.status_changed"
 # pressed the button.  See `incident_service.event_payload`.
 INCIDENT_RAISED = "incident.raised"
 INCIDENT_UPDATED = "incident.updated"
-INCIDENT_SLA_BREACHED = "incident.sla_breached"
-INCIDENT_RAISED = "incident.raised"
-INCIDENT_UPDATED = "incident.updated"
 INCIDENT_DISPATCHED = "incident.dispatched"
 #: Separate from `incident.updated` on purpose.  An SLA breach is the one
 #: incident event that means nobody acted, so a console must be able to treat it
 #: differently from the twenty status changes that mean somebody did.
 INCIDENT_SLA_BREACHED = "incident.sla_breached"
+
+# Phase 8 — forecasting.  One event per publish cycle carrying every zone, not
+# one per zone: the console redraws the whole forecast strip together, and forty
+# separate messages would make it redraw forty times a cycle.
+FORECAST_PUBLISHED = "forecast.published"
+
+# Phase 9 — Palkhi.  `dindi.moved` is deliberately *not* published on every
+# ping: forty Dindis reporting every 60 seconds is a message a second on a
+# channel a command centre keeps open all day, to move a dot 50 metres. It is
+# published when a Dindi crosses into or out of a halt town, and when the
+# deviation sweep changes its mind — the moments a human would want to look up.
+DINDI_ARRIVED = "dindi.arrived"
+DINDI_DEPARTED = "dindi.departed"
+DINDI_DEVIATION = "dindi.deviation"
+#: The Dindi's tracking phone went quiet, or came back. Its own event because
+#: "we do not know where this group is" is a different thing for an operator to
+#: see than any position update.
+DINDI_SIGNAL = "dindi.signal"
+HALT_TOWN_UPDATED = "halt_town.updated"
 
 
 def _encode(value: Any) -> Any:

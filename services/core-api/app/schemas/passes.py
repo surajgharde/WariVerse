@@ -142,6 +142,53 @@ class ScannerBundleOut(ApiModel):
     passes: list[dict[str, object]]
 
 
+class MyPasses(ApiModel):
+    """Every pass on the caller's phone number, split by whether it still matters.
+
+    Split server-side rather than in the app because "is this pass still worth
+    showing" is a question about the slot window and the expiry grace, and both
+    of those are configured here.  Two clients deciding it independently is two
+    chances to tell a pilgrim their live pass is finished.
+    """
+
+    upcoming: list[PassOut]
+    past: list[PassOut]
+    generated_at: datetime
+
+
+class NotificationOut(ApiModel):
+    """One queued message about one of the caller's passes.
+
+    `status` is reported exactly as the outbox holds it — `queued` means written
+    and not yet sent, and the app is expected to render it that way.  The
+    notifier service does not exist yet (Phase 5's stated gap), and a screen that
+    implied an SMS had gone out would be the app lying on its behalf.
+    """
+
+    id: uuid.UUID
+    pass_id: uuid.UUID
+    pass_reference: str
+    type: str  # reslot | reminder | cancelled | expiring
+    message: str
+    message_mr: str
+    status: str  # queued | sent | failed
+    created_at: datetime
+
+
+class NotificationList(ApiModel):
+    items: list[NotificationOut]
+    generated_at: datetime
+
+
+class CardLink(ApiModel):
+    """A signed URL for the no-JavaScript pass card (Section 4/M7)."""
+
+    url: str
+    expires_at: datetime
+    note: str
+    note_mr: str
+
+
 class ReslotRunOut(ApiModel):
     ran_at: datetime
     planned: int

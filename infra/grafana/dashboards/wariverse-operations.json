@@ -1,0 +1,261 @@
+{
+  "title": "WariVerse — can we still see the Wari?",
+  "uid": "wariverse-ops",
+  "tags": ["wariverse", "phase-10"],
+  "timezone": "Asia/Kolkata",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-3h", "to": "now" },
+  "editable": false,
+  "description": "The board is ordered by the question it answers, not by which service produced the metric. Row 1 is the only row that matters at 2 a.m.: can the control room see the crowd. Rows 2 and 3 are the API and the operational load, which are what you look at once you know the answer to row 1 is yes.",
+  "panels": [
+    {
+      "type": "row",
+      "title": "Can we see? — read this row first",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Cameras online",
+      "description": "Against total configured. Anything below total means one or more zones are estimating rather than measuring.",
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.67 },
+              { "color": "green", "value": 0.99 }
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      },
+      "targets": [
+        {
+          "expr": "wariverse_cameras_online / clamp_min(wariverse_cameras_total, 1)",
+          "legendFormat": "online",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Oldest zone reading",
+      "description": "The single most important number on this board. It is the age of the STALEST zone, not an average — an average hides one dark corridor behind thirty-nine healthy ones. Above 300s the console renders that zone as UNKNOWN.",
+      "gridPos": { "h": 5, "w": 5, "x": 4, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 90 },
+              { "color": "red", "value": 300 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "max(wariverse_zone_reading_age_seconds)",
+          "legendFormat": "oldest",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Reading age per zone",
+      "description": "A sawtooth is healthy — each tooth is a fresh reading resetting the age. A line that climbs and does not come back down is a zone that has gone dark, and the density figure beside it has stopped meaning anything.",
+      "gridPos": { "h": 5, "w": 15, "x": 9, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "wariverse_zone_reading_age_seconds",
+          "legendFormat": "{{zone}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "The crowd — context, not alarms",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Density per zone (p/m²)",
+      "description": "No alert fires on this panel, deliberately. A dense zone is Tuesday of the Wari and the product already routes it to an operator with a recommended action. Paging an engineer for it would train them to silence the pager that also tells them the cameras died.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2.0 },
+              { "color": "orange", "value": 3.5 },
+              { "color": "red", "value": 5.0 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "expr": "wariverse_zone_density_persons_per_m2", "legendFormat": "{{zone}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Stagnation index per zone",
+      "description": "The technical insight of the project, on a panel. Stagnation rises BEFORE density in a crush precursor — a dense crowd that has stopped moving is the dangerous state, and this line turns up first. Watch it against the density panel beside it.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "max": 1,
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+        }
+      },
+      "targets": [
+        { "expr": "wariverse_zone_stagnation_index", "legendFormat": "{{zone}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Reading confidence per zone",
+      "description": "Below 1.0 the density figure is an estimate rather than a measurement — usually because the zone has lost a camera. Section 0 rule 3: no AI output is presented as certainty, and that applies to the dashboard too.",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } },
+      "targets": [
+        { "expr": "wariverse_zone_reading_confidence", "legendFormat": "{{zone}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Alerts raised",
+      "description": "By type. A flat line during a busy afternoon is more suspicious than a spike — it usually means ingest stopped rather than that the crowd behaved.",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 15 },
+      "targets": [
+        {
+          "expr": "sum by (type) (rate(wariverse_alerts_raised_total[10m]) * 600)",
+          "legendFormat": "{{type}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "API health (Section 11 targets)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Request latency p95 by route",
+      "description": "Section 11: p95 < 300ms. The threshold line is the target, not a suggestion. During a release window the contended write is POST /passes; everything else should be flat.",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 22 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.3 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(wariverse_http_request_duration_seconds_bucket[5m])) by (le, path))",
+          "legendFormat": "{{path}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Request rate by status class",
+      "description": "5xx is the only series that should ever be zero. A rising 4xx during a release window is the slot ledger correctly refusing a full slot — that is the system working, not failing.",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 22 },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(wariverse_http_requests_total[5m]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Passes, incidents, Palkhi, assistant",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 29 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Passes issued / scanned / reslotted",
+      "description": "Scans well below issues over a slot window is a no-show rate, which is what the reslotting job reads. A reslot spike means the gate is running behind its plan.",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 30 },
+      "targets": [
+        { "expr": "rate(wariverse_passes_issued_total[10m]) * 600", "legendFormat": "issued", "refId": "A" },
+        { "expr": "sum(rate(wariverse_pass_scans_total[10m])) * 600", "legendFormat": "scanned", "refId": "B" },
+        { "expr": "rate(wariverse_passes_reslotted_total[10m]) * 600", "legendFormat": "reslotted", "refId": "C" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Open alerts by severity / SLA breaches",
+      "description": "SLA breaches are a control-room staffing signal, not an engineering one. Escalate them to the duty officer.",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 30 },
+      "targets": [
+        { "expr": "wariverse_alerts_open", "legendFormat": "open {{severity}}", "refId": "A" },
+        {
+          "expr": "sum(rate(wariverse_incident_sla_breaches_total[15m]) * 900)",
+          "legendFormat": "SLA breaches / 15m",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Dindis reporting vs silent",
+      "description": "Fourteen dots on a map means nothing without 'and six more groups are walking that we cannot see'. When silent overtakes reporting, the halt-town board is guessing.",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 30 },
+      "targets": [
+        { "expr": "wariverse_dindis_reporting", "legendFormat": "reporting", "refId": "A" },
+        { "expr": "wariverse_dindis_silent", "legendFormat": "silent", "refId": "B" },
+        { "expr": "wariverse_dindis_deviating", "legendFormat": "off schedule", "refId": "C" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Assistant turns by outcome",
+      "description": "The outcomes mean opposite things. Rising no_data is an outage. Rising refused is a product telling users the wrong thing about what the assistant is for. Rising degraded means the model has been unreachable and nobody noticed — the fallback works well enough to hide it.",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 36 },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(wariverse_assistant_turns_total[15m]) * 900)",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

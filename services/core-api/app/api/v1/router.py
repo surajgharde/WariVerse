@@ -11,17 +11,21 @@ from fastapi import APIRouter
 from app.api.v1.routes import (
     admin,
     alerts,
+    assistant,
     auth,
     breach,
     cameras,
     checkpoints,
     command,
     crowd,
+    forecast,
     incidents,
     ingest,
     missing_persons,
+    palkhi,
     pass_admin,
     passes,
+    pilgrim,
     users,
     ws,
 )
@@ -54,5 +58,12 @@ api_router.include_router(missing_persons.router)
 
 # Phase 6 — breach ledger, review, evidence clips, tripwires
 api_router.include_router(breach.router)
-# Phase 8 — forecast          (forecast)
+# Phase 7 — pilgrim PWA support (facilities, offline essentials)
+api_router.include_router(pilgrim.router)
+
+# Phase 8 — predictive forecasting
+api_router.include_router(forecast.router)
+
 # Phase 9 — palkhi, assistant (dindis, halt-towns, assistant)
+api_router.include_router(palkhi.router)
+api_router.include_router(assistant.router)

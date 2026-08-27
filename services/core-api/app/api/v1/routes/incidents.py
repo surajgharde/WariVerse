@@ -5,6 +5,7 @@
     PATCH /incidents/{id}            POST /incidents/{id}/dispatch
     GET  /incidents/{id}/dispatch-options
     GET  /responders                 POST /responders/{id}/ping
+    POST /admin/incidents/sla-sweep
 
 Three things this module is careful about.
 
@@ -30,6 +31,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,7 +43,7 @@ from app.core.permissions import Permission, Role
 from app.core.security import now_utc
 from app.models import Incident, Responder, Zone
 from app.models.incidents import IncidentSeverity, IncidentStatus, IncidentType
-from app.schemas.common import ErrorResponse, Page
+from app.schemas.common import ApiModel, ErrorResponse, Page
 from app.schemas.incidents import (
     DispatchOptions,
     DispatchRequest,
@@ -708,3 +710,69 @@ async def ping_responder(
     )
     await session.commit()
     return out
+
+
+# ---------------------------------------------------------------------------
+# manual SLA sweep
+# ---------------------------------------------------------------------------
+class SlaSweepResult(ApiModel):
+    """What one sweep found.
+
+    `breached` is the count of incidents that crossed their deadline *on this
+    run*. It is deliberately not "how many are currently in breach": the sweep
+    is idempotent, so a second call a moment later reports 0, and a caller
+    watching that number is watching a rate rather than a backlog.
+    """
+
+    breached: int
+    worst_overdue_seconds: float = 0.0
+    references: list[str] = Field(default_factory=list)
+    swept_at: datetime
+
+
+@router.post("/admin/incidents/sla-sweep", response_model=SlaSweepResult)
+async def sweep_incident_sla(
+    _: Actor = Depends(require(Permission.INCIDENT_UPDATE_ANY)),
+    session: AsyncSession = Depends(get_session),
+) -> SlaSweepResult:
+    """Run the SLA sweep now instead of waiting for the scheduler.
+
+    The scheduler already does this every 15 seconds (`jobs.run_incident_sla`),
+    so this endpoint is not how breaches are normally found. It exists for the
+    two cases where waiting is wrong: a tabletop drill, where an exercise
+    controller needs the clock to move on command, and an incident review, where
+    somebody is reconstructing a timeline and needs the sweep to have run at a
+    known moment rather than whenever the tick happened to land.
+
+    It publishes the same `incident.sla_breached` events the job does. A breach
+    found by hand and a breach found by the scheduler are the same fact, and a
+    console that only saw one of them would show a different timeline depending
+    on who pressed what.
+    """
+    moment = now_utc()
+    breaches = await incident_service.sweep_sla(session, at=moment)
+
+    outbound: list[tuple[str, dict[str, object]]] = []
+    for breach in breaches:
+        zone = await session.get(Zone, breach.incident.zone_id) if breach.incident.zone_id else None
+        outbound.append(
+            (
+                events.INCIDENT_SLA_BREACHED,
+                incident_service.event_payload(
+                    breach.incident,
+                    zone=zone,
+                    extra={"overdue_seconds": round(breach.overdue_seconds, 1)},
+                ),
+            )
+        )
+
+    references = [b.incident.reference for b in breaches]
+    await session.commit()
+    await events.publish_many(outbound)
+
+    return SlaSweepResult(
+        breached=len(breaches),
+        worst_overdue_seconds=round(max((b.overdue_seconds for b in breaches), default=0.0), 1),
+        references=references,
+        swept_at=moment,
+    )

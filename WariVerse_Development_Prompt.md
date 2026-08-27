@@ -7,6 +7,87 @@
 
 ---
 
+## AMENDMENT LOG
+
+> This document is the original requirements brief. Where the built system
+> deliberately diverges from it, the divergence is recorded here and marked
+> `[AMENDED]` inline, rather than the text being silently rewritten — a spec
+> edited to match whatever got built stops being able to answer "what did we
+> actually ask for?"
+
+### A-1 · Zero paid or account-gated third-party services (2026-08-26)
+
+**Changed:** Section 6 (architecture), Section 7 (tech stack), Section 11
+(observability), Section 14 (repository structure).
+
+**What changed.** The brief named FCM web push, an SMS gateway
+(MSG91 / Gupshup), an IVR hook, Sentry, and OSM tile servers. **None of these
+are used, and none are needed.** The delivered system requires **no external
+account and no paid service whatsoever**. The single external key it can use —
+`GEMINI_API_KEY` — is optional and free-tier, and the assistant answers without
+it from the same read-only tools.
+
+**Why.** Three reasons, in order of weight:
+
+1. **Section 11 already demanded it, implicitly.** "A system that needs 4G is a
+   system that fails during the Wari" (E5). A notification path that depends on
+   a commercial gateway's uptime, and a basemap that blocks on a tile CDN, are
+   the same class of dependency as 4G. The control room during the Wari is
+   precisely where they fail.
+2. **Deployability by a temple trust.** A recurring vendor invoice is a
+   procurement decision, an annual renewal, and a single point of
+   administrative failure between one Wari and the next. Removing it removes an
+   entire category of reason the system does not get deployed.
+3. **Reproducibility.** Anyone — a reviewer, a successor team, a judge — can run
+   the whole system from a clean clone in one command with no signup.
+
+**What replaced them.**
+
+| Named in the brief | What is actually used |
+| --- | --- |
+| FCM web push | Not implemented. In-app + WebSocket delivery. |
+| SMS gateway (MSG91 / Gupshup) | None. `OTP_DEBUG_ECHO` in development; SOS fallback opens the **device's own** SMS app to a configured control-room number, which needs no gateway account. |
+| IVR hook | Not implemented. Tier 3 / M10, never reached. |
+| Sentry | Not implemented. Structured JSON logs with `trace_id`, plus Prometheus + Grafana, both self-hosted. |
+| OSM / commercial tiles | MapLibre rendering **our own zone polygons** on a flat background. No tile server. |
+| `services/notifier/` | Not built. Nothing needed it. |
+
+**What this costs, stated honestly.** Real push notifications and an IVR channel
+for feature-phone pilgrims are genuinely valuable and are genuinely absent. Both
+were Tier 3. Adding either later means adding a provider setting to
+`app/core/config.py` *at the same time* as the `.env` entry — the drift this
+amendment cleans up happened because a placeholder was added to `.env.example`
+that no code ever read.
+
+### A-2 · Plain asyncio scheduler instead of Celery/RQ (Phase 1)
+
+**Changed:** Section 6 (architecture).
+
+Section 6 names Celery or RQ for async jobs. The system runs ten scheduled jobs
+— reslotting, no-show expiry, camera watchdog, alert maintenance, SLA sweep,
+three purges, chain verification, Palkhi sweep — and Celery would add a broker
+process and a worker image to run what are, in substance, timers.
+
+They are implemented as an asyncio interval loop per job with a **Redis
+single-runner lock**, so three API replicas do not reslot the same passes three
+times. Every job is a plain `async` callable taking no arguments, so moving them
+behind Celery later is a decorator on each, not a rewrite. The lock deliberately
+**fails open** — with Redis down a job runs anyway, because each is idempotent
+and a missed reslot is worse than a duplicated one.
+
+### A-3 · Breach evidence is redacted, never deleted (Phase 6)
+
+**Changed:** Section 4/M5.
+
+The brief allows a System Admin to delete breach evidence. Implemented as
+*redaction*: the clip goes, with a mandatory written reason, and the record and
+its chain hash remain. A ledger whose rows can vanish is not a ledger — deleting
+a row would break the hash chain at exactly the point someone wanted it broken,
+which is indistinguishable from the tampering the chain exists to detect. Where
+the literal instruction and its stated purpose disagree, the purpose wins.
+
+---
+
 ## SECTION 0 — MASTER PROMPT (paste this first)
 
 ```
@@ -143,6 +224,9 @@ TIER 3 — DEPTH (build only if Tier 1+2 are stable)
   M8 Palkhi / Dindi live tracking and halt-town readiness
   M9 Analytics & post-Wari reporting
   M10 IVR/SMS fallback channel for feature-phone pilgrims
+      [AMENDED A-1] NOT BUILT. Tier 3, never reached — and an IVR line is the
+      one item on this list that genuinely does require a paid account, so it
+      is also the one deliberately left for a deployment to add.
 
 Explicitly OUT OF SCOPE: facial recognition, individual identity tracking,
 payment gateway, native mobile apps, hardware procurement.
@@ -283,6 +367,11 @@ SOS FLOW (pilgrim side):
   - One large button, works with 3 taps max, works offline (queues and fires on
     reconnect), captures GPS + last known zone + optional 10s audio note.
   - Sends SMS fallback to a control-room number if the app cannot reach the API.
+    [AMENDED A-1] Implemented, and without a gateway account: the app hands the
+    message to the DEVICE's own SMS app, addressed to CONTROL_ROOM_SMS_NUMBER
+    (served on /pilgrim/essentials so it survives going offline). Blank is a
+    supported state — the app then says no number is configured rather than
+    rendering a button that dials nothing.
   - Shows the pilgrim a confirmation with a reference number and, if available,
     the ETA of the nearest responder. Never leave them staring at a spinner.
 
@@ -336,6 +425,13 @@ INTEGRITY (this is what makes it useful against pressure):
 
 ACCESS CONTROL: clip playback requires re-authentication and logs every view.
 RETENTION: 90 days default, configurable, auto-purge job with a purge log.
+  [AMENDED A-3] Removal by a System Admin is implemented as REDACTION, not
+  deletion: the clip goes with a mandatory written reason, and the record and
+  its chain hash remain. Deleting the row would break the chain at exactly the
+  point somebody wanted it broken — indistinguishable from the tampering the
+  chain exists to detect. The purge log carries a row on EVERY run, including
+  the ones that purge nothing, because a governance review asks "has this been
+  running", not "what was deleted".
 ```
 
 ### M6 — Predictive Crowd Forecasting
@@ -468,7 +564,14 @@ E10. Post-event analytics pack — the trust's real annual need: an evidence
                truth          queues)
 
   Async jobs: Celery/RQ — reslotting, forecasting, notifications, purges.
+    [AMENDED A-2] Built as a plain asyncio interval scheduler with Redis
+    single-runner locks (app/workers/scheduler.py). Celery adds a broker and a
+    worker image for what is a set of timers; the jobs are plain callables, so
+    registering them as Celery tasks later is a decorator, not a rewrite.
   Notifications: FCM web push + SMS gateway (MSG91/Gupshup) + IVR hook.
+    [AMENDED A-1] NOT USED. No push key, no SMS gateway account, no IVR.
+    Delivery is in-app + WebSocket; the SOS fallback opens the device's own SMS
+    app to a control-room number, which needs no gateway. See the Amendment Log.
 
 BOUNDARIES: the AI service NEVER writes to the core database directly. It
 publishes events. The core API owns all state. This is what lets you restart
@@ -490,11 +593,22 @@ LLM:        Gemini API — used ONLY for: multilingual pilgrim assistant replies
 Frontend:   React 18 + TypeScript (strict) + Vite, TanStack Query, Zustand,
             Tailwind, MapLibre GL (with OSM tiles; Google Maps only for
             routing if needed — MapLibre lets you self-host tiles offline)
+            [AMENDED A-1] Shipped with NO tiles at all. The console draws our
+            own zone polygons on a flat background: a control room during the
+            Wari is exactly where a map that blocks on a tile CDN fails, and
+            everything an operator needs (zone, colour, label) is in our own
+            database. Set VITE_MAP_STYLE to add a basemap you can reach.
 PWA:        Workbox service worker, IndexedDB (Dexie)
 i18n:       i18next — mr (default), hi, en. All strings externalised from day 1.
 Realtime:   WebSocket (FastAPI native) + Redis pub/sub fan-out
 Infra:      Docker Compose (dev), single VPS or AWS ECS (prod), Nginx, GitHub
             Actions CI, Sentry, Prometheus + Grafana
+            [AMENDED A-1] Sentry NOT used — it is an external account, and the
+            errors it would carry are pilgrim-facing traces. Replaced by
+            structured JSON logs carrying the same `trace_id` the client sees in
+            its error envelope, so an operator can read a trace id off a
+            screenshot and you can find the request. Prometheus + Grafana are
+            self-hosted behind `--profile observability`.
 Testing:    pytest + httpx (backend), Vitest + Playwright (frontend)
 ```
 
@@ -647,6 +761,12 @@ DEGRADATION:    Define and test the manual mode for every module. Ship a
 OBSERVABILITY:  Structured JSON logs with trace_id, Prometheus metrics per
                 endpoint and per zone pipeline, Grafana board, Sentry on both
                 apps, alerting on camera heartbeat loss > 2 min.
+                [AMENDED A-1] Delivered without Sentry (see A-1). Everything
+                else is built: per-endpoint AND per-zone-pipeline metrics —
+                which answer different questions and can disagree, since a
+                green API over forty dark cameras is the failure the split
+                exists to expose. The camera-heartbeat alert is
+                `CameraHeartbeatLost` in infra/prometheus/alerts.yml.
 BACKUP:         Postgres PITR, hourly snapshot during Wari, restore drill
                 documented and actually performed once.
 ```
@@ -746,6 +866,8 @@ wariverse/
 │   │   ├── app/{pipeline,detectors,tracking,zones,tripwire,forecast,sim}
 │   │   └── models/            # weights, gitignored
 │   └── notifier/              # SMS/push/IVR fan-out
+│                              # [AMENDED A-1] NOT BUILT. No gateway account is
+│                              # used, so there was nothing to fan out to.
 ├── apps/
 │   ├── admin-console/         # React TS
 │   ├── pilgrim-pwa/           # React TS + Workbox
