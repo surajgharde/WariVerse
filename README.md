@@ -169,6 +169,4 @@ this goes anywhere near real pilgrims:
 
 ---
 
-## 📄 License
-
-MIT.
+ 
