@@ -1,1 +1,0 @@
-{"root":["./src/app.tsx","./src/i18n.ts","./src/main.tsx","./src/screens.tsx","./src/lib/api.ts","./src/lib/db.ts","./src/lib/display.ts","./src/lib/freshness.test.ts","./src/lib/freshness.ts","./src/lib/qr.ts","./src/lib/queue.test.ts","./src/lib/queue.ts","./src/lib/sync.ts","./src/lib/totp.test.ts","./src/lib/totp.ts","./src/lib/types.ts"],"version":"5.9.3"}

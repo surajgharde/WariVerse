@@ -1,8 +1,0 @@
-# Base image: the service runs, and the simulation runs, on these alone.
-# `CROWD_SOURCE=sim` is the default, so a working demo needs no vision stack.
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-pydantic==2.10.4
-pydantic-settings==2.7.0
-httpx==0.28.1
-prometheus-client==0.21.1
