@@ -1,0 +1,122 @@
+# A distinct project name: this machine also runs an unrelated `wariverse`
+# stack, and a shared name silently recreates its containers.
+name: wariverse-backend
+
+x-app-env: &app-env
+  DATABASE_URL: postgresql+asyncpg://wariverse:${POSTGRES_PASSWORD:-wariverse}@postgres:5432/wariverse
+  REDIS_URL: redis://redis:6379/0
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  LOG_JSON: "true"
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env — at least 32 characters}
+  ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+  DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+  ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+  GOOGLE_TTS_API_KEY: ${GOOGLE_TTS_API_KEY:-}
+  TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+  TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+  TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
+  CONTROL_ROOM_PHONE: ${CONTROL_ROOM_PHONE:-}
+  SMS_PROVIDER: ${SMS_PROVIDER:-console}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081}
+  IVR_PUBLIC_BASE_URL: ${IVR_PUBLIC_BASE_URL:-}
+
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      # The API runs four workers; the simulator must be a single process, so
+      # it lives in its own service below.
+      CROWD_SIMULATOR_ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Migrate and seed once, then serve. Alembic is safe to re-run; the seed is
+    # idempotent.
+    command: >
+      sh -c "alembic upgrade head &&
+             python -m scripts.seed &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+                    --proxy-headers --forwarded-allow-ips '*'"
+    expose:
+      - "8000"
+    ports:
+      # Published for local development; behind nginx in production you can
+      # drop this and reach the API only through the proxy.
+      - "${API_PORT:-8000}:8000"
+
+  # Stands in for the CCTV feed until it exists. ONE replica, by design.
+  crowd-simulator:
+    build: .
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      CROWD_SIMULATOR_ENABLED: "true"
+    depends_on:
+      api:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    command: ["python", "-m", "scripts.simulate_crowd"]
+    # The image's healthcheck curls :8000; this service serves no HTTP, so it
+    # would report unhealthy forever and look broken to an orchestrator.
+    healthcheck:
+      disable: true
+    deploy:
+      replicas: 1
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wariverse
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wariverse}
+      POSTGRES_DB: wariverse
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wariverse -d wariverse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # appendonly so sessions and OTPs survive a restart. Crowd readings and TTS
+    # audio are caches and would rebuild anyway.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # nginx.conf `include`s this; without it nginx fails to start.
+      - ./nginx/proxy_headers.inc:/etc/nginx/conf.d/proxy_headers.inc:ro
+      # Mount certificates here and uncomment the TLS block in nginx.conf.
+      - ./nginx/certs:/etc/nginx/certs:ro
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+
+volumes:
+  pgdata:
+  redisdata:

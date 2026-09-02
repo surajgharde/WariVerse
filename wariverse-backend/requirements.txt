@@ -1,0 +1,36 @@
+# --- Core web framework -------------------------------------------------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# --- Settings / validation ----------------------------------------------
+pydantic==2.10.4
+pydantic-settings==2.7.0
+email-validator==2.2.0
+
+# --- Database ------------------------------------------------------------
+SQLAlchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+greenlet==3.1.1
+
+# --- Cache / session store ----------------------------------------------
+redis==5.2.1
+
+# --- Auth ----------------------------------------------------------------
+# 3.5.0 is the first release carrying fixes for CVE-2024-33663 (algorithm
+# confusion) and CVE-2024-33664 (JWE decompression bomb) — do not pin lower.
+python-jose[cryptography]==3.5.0
+
+# --- LLM -----------------------------------------------------------------
+openai==1.59.6
+
+# --- Observability -------------------------------------------------------
+structlog==24.4.0
+
+# --- HTTP client ---------------------------------------------------------
+httpx==0.28.1
+
+# --- Tests ---------------------------------------------------------------
+pytest==8.3.4
+pytest-asyncio==0.25.1

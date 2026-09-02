@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Expo & React Native Web
+.expo/
+.expo-shared/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native Mobile Builds
+ios/
+android/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro bundler
+.metro-health-check*
+
+# Environment & Credentials
+.env
+.env*.local
+*.pem
+
+# Typescript & Build
+*.tsbuildinfo
+.vercel/
+
+# Logs & OS
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.DS_Store
+Thumbs.db

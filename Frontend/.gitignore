@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+
+# Expo & React Native
+.expo/
+.expo-shared/
+dist/
+web-build/
+expo-env.d.ts
+.metro-health-check*
+
+# Build outputs
+out-tsc/
+*.tsbuildinfo
+build/
+coverage/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+*.env
+
+# IDEs & Editors
+.idea/
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.swp
+*.swo
+
+# VS Code (preserve settings)
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Logs & Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Replit & Caches
+.cache/
+.local/
